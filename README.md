@@ -1,3 +1,5 @@
+[<a href="/README.md">English</a>] | [<a href="/docs/README.zh-Hans.md">中文(简体)</a>]
+
 # 1Panel MCP Server
 
 **1Panel MCP Server** is an implementation of the Model Context Protocol (MCP) server for [1Panel](https://github.com/1Panel-dev/1Panel).
