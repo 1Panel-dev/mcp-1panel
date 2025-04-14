@@ -1,0 +1,116 @@
+name: Build and Release MCP-1Panel
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v1.0.0)'
+        required: true
+        type: string
+
+env:
+  IMAGE_NAME: 1panel/1panel-mcp-server
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: arm
+            goarm: 7
+          - goos: linux
+            goarch: s390x
+          - goos: linux
+            goarch: ppc64le
+
+    name: Build for ${{ matrix.goos }}-${{ matrix.goarch }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build Binary
+        run: |
+          mkdir -p build
+          FILE_NAME=mcp-1panel-${{ matrix.goos }}-${{ matrix.goarch }}
+          if [ "${{ matrix.goarch }}" = "arm" ]; then
+            FILE_NAME="${FILE_NAME}v${{ matrix.goarm }}"
+          fi
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM=${{ matrix.goarm || '' }} \
+          go build -trimpath -ldflags '-s -w' -o build/${FILE_NAME} ./main.go
+          chmod +x build/${FILE_NAME}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.goos }}-${{ matrix.goarch }}-${{ matrix.goarm || 'default' }}
+          path: build/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    name: Create GitHub Release
+    steps:
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./release-assets
+
+      - name: Move all binaries to one folder
+        run: |
+          mkdir -p final-release
+          find ./release-assets -type f -exec mv {} final-release/ \;
+
+      - name: List final files
+        run: ls -lh final-release
+
+      - name: Create GitHub Release Draft
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: ${{ github.event.inputs.version }}
+          draft: true
+          files: final-release/*
+
+  docker:
+    needs: build
+    runs-on: ubuntu-latest
+    name: Build and Push Docker Image
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        id: buildx
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/s390x,linux/ppc64le
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.event.inputs.version }}
