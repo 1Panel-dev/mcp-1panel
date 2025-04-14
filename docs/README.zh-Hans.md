@@ -1,16 +1,27 @@
 # 1Panel MCP Server
 
-1Panel MCP 服务器是一个用于 1Panel 的模型上下文协议（Model Context Protocol，MCP）服务器实现。
+**1Panel MCP Server** 是 [1Panel](https://github.com/1Panel-dev/1Panel) 的 Model Context Protocol (MCP) 协议服务端实现。
 
-## 安装
+---
 
-### 前提条件
+## 安装方式
 
-- Go 1.23.0 或更高版本 (二进制使用方式)
-- Docker (Docker 使用方式)
-- 已安装 1Panel
+### ✅ 方式一：从 Release 页面下载安装包（推荐）
 
-### 从源代码构建 (二进制)
+1. 访问 [Releases 页面](https://github.com/1Panel-dev/mcp-1panel/releases)，下载对应系统的可执行文件。
+
+2. 安装示例（以 `amd64` 为例）：
+
+```bash
+chmod +x mcp-1panel-linux-amd64
+mv mcp-1panel-linux-amd64 /usr/local/bin/mcp-1panel
+```
+
+---
+
+### 🛠️ 方式二：通过源码构建
+
+确保本地已安装 Go 1.23 或更高版本，执行以下命令：
 
 1. 克隆代码仓库：
 
@@ -19,29 +30,51 @@ git clone https://github.com/1Panel-dev/mcp-1panel.git
 cd mcp-1panel
 ```
 
-2. 构建项目：
+2. 构建可执行文件：
 
 ```bash
 make build
 ```
 
-将 `./build/mcp-1panel` 移动到系统环境变量 PATH 所包含的目录中。
+3. 可执行文件生成路径为：`./build/mcp-1panel`，建议移动到系统 PATH 目录中。
 
-### 使用 `go install` 安装
+---
+
+### 🚀 方式三：通过 `go install` 安装
+
+确保本地已安装 Go 1.23 或更高版本：
 
 ```bash
 go install github.com/1Panel-dev/mcp-1panel@latest
 ```
 
+---
+
+### 🐳 方式四：通过 Docker 安装
+
+确保本地已正确安装并配置好 Docker。
+
+我们官方提供的镜像支持以下五种架构：
+
+- `amd64`
+- `arm64`
+- `arm/v7`
+- `s390x`
+- `ppc64le`
+
+---
+
 ## 使用方式
 
-你可以将 1Panel MCP Server 与 Cursor 和 Windsurf 等工具配合使用。
+1Panel MCP Server 支持两种运行模式：**stdio** 和 **sse**
 
-### stdio 模式
+---
 
-#### 二进制
+### 模式一：stdio（默认）
 
-确保已安装 Go 并已构建或安装该二进制文件：
+#### 📦 使用本地二进制文件
+
+在 Cursor 或 Windsurf 的配置文件中添加如下内容：
 
 ```json
 {
@@ -57,9 +90,7 @@ go install github.com/1Panel-dev/mcp-1panel@latest
 }
 ```
 
-#### Docker 方式
-
-确保已安装 Docker：
+#### 🐳 使用 Docker 方式运行
 
 ```json
 {
@@ -85,54 +116,53 @@ go install github.com/1Panel-dev/mcp-1panel@latest
 }
 ```
 
-### SSE 模式
+---
 
-使用 SSE 启动 MCP server：
+### 模式二：sse
+
+#### 🚀 启动 MCP Server：
 
 ```bash
-mcp-1panel -host <your 1Panel access address> -token <your 1Panel access token> -transport sse -addr "http://localhost:8000"
+mcp-1panel -host http://localhost:8080 -token <your 1Panel access token> -transport sse -addr http://localhost:8000
 ```
 
-Cursor/Windsurf 配置示例：
+#### ⚙️ 配置 Cursor 或 Windsurf：
 
 ```json
 {
   "mcpServers": {
     "mcp-1panel": {
-        "url": "http://localhost:8000/sse"
+      "url": "http://localhost:8000/sse"
     }
   }
 }
 ```
 
-### 命令行选项
+---
 
-- `-token`：1Panel 访问令牌
-- `-host`：1Panel 访问地址
-- `-transport`：传输类型（stdio 或 sse，默认：stdio）
-- `-sse-port`：启动 SSE 服务器端口（默认：8000）
+### 🔧 命令行参数
 
-### 环境变量
+- `-token`: 1Panel 的访问令牌
+- `-host`: 1Panel 的地址，如：http://localhost:8080
+- `-transport`: 传输方式：`stdio` 或 `sse`，默认是 `stdio`
+- `-addr`: SSE 服务监听地址，默认是 `http://localhost:8000`
 
-您也可以使用环境变量配置服务器：
+---
 
-- `PANEL_HOST`：1Panel 访问地址
-- `PANEL_ACCESS_TOKEN`：1Panel 访问令牌
+## 🧰 可用工具（Tools）
 
-## 可用工具
+以下是 MCP Server 提供的工具列表，用于与 1Panel 交互：
 
-服务器提供了各种与 1Panel 交互的工具：
-
-| 工具                          | 类别 | 描述               |
-|-----------------------------|------|------------------|
-| **get_dashboard_info**      | 系统 | 列出概览页状态      |
-| **get_system_info**         | 系统 | 获取系统信息        |
-| **list_websites**           | 网站 | 列出所有网站        |
-| **create_website**          | 网站 | 创建网站           |
-| **list_ssls**               | 证书 | 列出所有证书        |
-| **create_ssl**              | 证书 | 创建证书           |
-| **list_installed_apps**     | 应用 | 列出所有已安装应用   |
-| **install_openresty**       | 应用 | 安装 OpenResty     |
-| **install_mysql**           | 应用 | 安装 MySQL         |
-| **list_databases**          | 数据库 | 列出所有数据库     |
-| **create_database**         | 数据库 | 创建数据库        |
+| 工具名称                | 分类        | 描述                             |
+|-------------------------|-------------|----------------------------------|
+| `get_dashboard_info`    | System      | 获取仪表盘状态                   |
+| `get_system_info`       | System      | 获取系统信息                     |
+| `list_websites`         | Website     | 列出所有网站                     |
+| `create_website`        | Website     | 创建新网站                       |
+| `list_ssls`             | Certificate | 列出所有证书                     |
+| `create_ssl`            | Certificate | 创建新证书                       |
+| `list_installed_apps`   | Application | 列出已安装应用                   |
+| `install_openresty`     | Application | 安装 OpenResty                   |
+| `install_mysql`         | Application | 安装 MySQL                       |
+| `list_databases`        | Database    | 列出所有数据库                   |
+| `create_database`       | Database    | 创建新数据库                     |
