@@ -37,7 +37,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.25'
 
       - name: Build Binary
         run: |
@@ -73,6 +73,11 @@ jobs:
 
       - name: List final files
         run: ls -lh final-release
+
+      - name: Generate checksums
+        run: |
+          cd final-release
+          sha256sum * > SHA256SUMS
 
       - name: Create GitHub Release Draft
         uses: softprops/action-gh-release@v2

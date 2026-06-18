@@ -13,22 +13,18 @@ const (
 	ListSSLs = "list_ssls"
 )
 
-var ListSSLsTool = mcp.NewServerTool[ListSSLsInput, any](
-	ListSSLs,
-	"list ssls",
-	func(ctx context.Context, _ *mcp.ServerSession, params *mcp.CallToolParamsFor[ListSSLsInput]) (*mcp.CallToolResultFor[any], error) {
-		req := &types.PageRequest{
-			Page:     1,
-			PageSize: 500,
-		}
-		listWebsiteSSLRes := &types.ListWebsiteSSLRes{}
-		result, err := utils.NewPanelClient("POST", "/websites/ssl/search", utils.WithPayload(req)).Request(listWebsiteSSLRes)
-		if result != nil {
-			result.StructuredContent = listWebsiteSSLRes
-		}
-		return result, err
-	},
-)
+func listSSLs(ctx context.Context, _ *mcp.CallToolRequest, input ListSSLsInput) (*mcp.CallToolResult, any, error) {
+	req := &types.PageRequest{
+		Page:     1,
+		PageSize: 500,
+	}
+	listWebsiteSSLRes := &types.ListWebsiteSSLRes{}
+	result, err := utils.NewPanelClient("POST", "/websites/ssl/search", utils.WithPayload(req)).Request(listWebsiteSSLRes)
+	if result != nil {
+		result.StructuredContent = listWebsiteSSLRes
+	}
+	return utils.ToolResult(result, err)
+}
 
 type ListSSLsInput struct {
 }

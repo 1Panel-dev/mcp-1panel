@@ -2,9 +2,7 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -16,81 +14,61 @@ const (
 	InstallMySQL = "install_mysql"
 )
 
-var InstallMySQLTool = mcp.NewServerTool[InstallMySQLInput, any](
-	InstallMySQL,
-	"install mysql, if not set name, default is mysql, if not set version, default is '', if not set root_password, default is '')",
-	func(ctx context.Context, _ *mcp.ServerSession, params *mcp.CallToolParamsFor[InstallMySQLInput]) (*mcp.CallToolResultFor[any], error) {
-		input := params.Arguments
-		name := input.Name
-		if name == "" {
-			name = "mysql"
-		}
+func installMySQL(ctx context.Context, _ *mcp.CallToolRequest, input InstallMySQLInput) (*mcp.CallToolResult, any, error) {
+	name := input.Name
+	if name == "" {
+		name = "mysql"
+	}
 
-		version := input.Version
-		if version == "latest" {
-			version = ""
-		}
+	appRes := &types.AppRes{}
+	result, err := utils.NewPanelClient("GET", "/apps/mysql").Request(appRes)
+	if err != nil {
+		return utils.ToolResult(result, err)
+	}
 
-		appRes := &types.AppRes{}
-		result, err := utils.NewPanelClient("GET", "/apps/mysql").Request(appRes)
+	version, err := utils.SelectExactVersion(input.Version, appRes.Data.Versions)
+	if err != nil {
+		return utils.ToolError(err)
+	}
+
+	appID := appRes.Data.ID
+	appDetailURL := fmt.Sprintf("/apps/detail/%d/%s/app", appID, version)
+	appDetailRes := &types.AppDetailRes{}
+	result, err = utils.NewPanelClient("GET", appDetailURL).Request(appDetailRes)
+	if err != nil {
+		return utils.ToolResult(result, err)
+	}
+	appDetailID := appDetailRes.Data.ID
+
+	port, err := utils.NormalizePort(input.Port, 3306, "port")
+	if err != nil {
+		return utils.ToolError(err)
+	}
+
+	rootPassword := input.RootPassword
+	if rootPassword == "" {
+		generated, err := utils.GenerateSecureString(20)
 		if err != nil {
-			return result, err
+			return utils.ToolError(fmt.Errorf("failed to generate secure root password"))
 		}
-		exist := false
-		for _, v := range appRes.Data.Versions {
-			if v == version || strings.Contains(v, version) {
-				version = v
-				exist = true
-				break
-			}
-		}
-		if !exist {
-			err := errors.New("version not found")
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					&mcp.TextContent{Text: err.Error()},
-				},
-				IsError: true,
-			}, err
-		}
-		if version == "" {
-			version = appRes.Data.Versions[0]
-		}
-		appID := appRes.Data.ID
-		appDetailURL := fmt.Sprintf("/apps/detail/%d/%s/app", appID, version)
-		appDetailRes := &types.AppDetailRes{}
-		result, err = utils.NewPanelClient("GET", appDetailURL).Request(appDetailRes)
-		if err != nil {
-			return result, err
-		}
-		appDetailID := appDetailRes.Data.ID
+		rootPassword = fmt.Sprintf("mysql_%s", generated)
+	}
 
-		port := input.Port
-		if port == 0 {
-			port = 3306
-		}
-
-		rootPassword := input.RootPassword
-		if rootPassword == "" {
-			rootPassword = fmt.Sprintf("mysql_%s", utils.GetRandomStr(6))
-		}
-
-		req := &types.AppInstallCreate{
-			AppDetailID: appDetailID,
-			Name:        name,
-			Params: map[string]interface{}{
-				"PANEL_APP_PORT_HTTP":    port,
-				"PANEL_DB_ROOT_PASSWORD": rootPassword,
-			},
-		}
-		res := &types.Response{}
-		result, err = utils.NewPanelClient("POST", "/apps/install", utils.WithPayload(req)).Request(res)
-		if result != nil {
-			result.StructuredContent = res
-		}
-		return result, err
-	},
-)
+	req := &types.AppInstallCreate{
+		AppDetailID: appDetailID,
+		Name:        name,
+		Params: map[string]interface{}{
+			"PANEL_APP_PORT_HTTP":    port,
+			"PANEL_DB_ROOT_PASSWORD": rootPassword,
+		},
+	}
+	res := &types.Response{}
+	result, err = utils.NewPanelClient("POST", "/apps/install", utils.WithPayload(req)).Request(res)
+	if result != nil {
+		result.StructuredContent = res
+	}
+	return utils.ToolResult(result, err)
+}
 
 type InstallMySQLInput struct {
 	Name         string  `json:"name" jsonschema:"mysql name"`

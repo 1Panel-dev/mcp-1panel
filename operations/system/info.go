@@ -13,18 +13,14 @@ const (
 	GetSystemInfo = "get_system_info"
 )
 
-var GetSystemInfoTool = mcp.NewServerTool[GetSystemInfoInput, any](
-	GetSystemInfo,
-	"show host system information, The unit of diskSize is bytes",
-	func(ctx context.Context, _ *mcp.ServerSession, params *mcp.CallToolParamsFor[GetSystemInfoInput]) (*mcp.CallToolResultFor[any], error) {
-		client := utils.NewPanelClient("GET", "/dashboard/base/os")
-		osInfo := &types.OsInfoRes{}
-		result, err := client.Request(osInfo)
-		if result != nil {
-			result.StructuredContent = osInfo
-		}
-		return result, err
-	},
-)
+func getSystemInfo(ctx context.Context, _ *mcp.CallToolRequest, input GetSystemInfoInput) (*mcp.CallToolResult, any, error) {
+	client := utils.NewPanelClient("GET", "/dashboard/base/os")
+	osInfo := &types.OsInfoRes{}
+	result, err := client.Request(osInfo)
+	if result != nil {
+		result.StructuredContent = osInfo
+	}
+	return utils.ToolResult(result, err)
+}
 
 type GetSystemInfoInput struct{}

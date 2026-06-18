@@ -15,76 +15,59 @@ const (
 	CreateDatabase = "create_database"
 )
 
-var CreateDatabaseTool = mcp.NewServerTool[CreateDatabaseInput, any](
-	CreateDatabase,
-	"create a database by type name and password",
-	func(ctx context.Context, _ *mcp.ServerSession, params *mcp.CallToolParamsFor[CreateDatabaseInput]) (*mcp.CallToolResultFor[any], error) {
-		input := params.Arguments
-		if input.Database == "" {
-			err := errors.New("database name is required")
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
-				IsError: true,
-			}, err
-		}
-		if input.DatabaseType == "" {
-			err := errors.New("database type is required")
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
-				IsError: true,
-			}, err
-		}
-		if input.DatabaseType != "mysql" && input.DatabaseType != "postgresql" {
-			err := errors.New("database type is invalid, support mysql and postgresql")
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
-				IsError: true,
-			}, err
-		}
-		if input.Name == "" {
-			err := errors.New("name is required")
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
-				IsError: true,
-			}, err
-		}
+func createDatabase(ctx context.Context, _ *mcp.CallToolRequest, input CreateDatabaseInput) (*mcp.CallToolResult, any, error) {
+	if input.Database == "" {
+		return utils.ToolError(errors.New("database name is required"))
+	}
+	if input.DatabaseType == "" {
+		return utils.ToolError(errors.New("database type is required"))
+	}
+	if input.DatabaseType != "mysql" && input.DatabaseType != "postgresql" {
+		return utils.ToolError(errors.New("database type is invalid, support mysql and postgresql"))
+	}
+	if input.Name == "" {
+		return utils.ToolError(errors.New("name is required"))
+	}
 
-		password := input.Password
-		if password == "" {
-			password = utils.GetRandomStr(12)
+	password := input.Password
+	if password == "" {
+		generated, err := utils.GenerateSecureString(24)
+		if err != nil {
+			return utils.ToolError(errors.New("failed to generate secure database password"))
 		}
-		encodedPassword := base64.StdEncoding.EncodeToString([]byte(password))
+		password = generated
+	}
+	encodedPassword := base64.StdEncoding.EncodeToString([]byte(password))
 
-		username := input.Username
-		if username == "" {
-			username = input.Name
-		}
+	username := input.Username
+	if username == "" {
+		username = input.Name
+	}
 
-		createReq := &types.CreateDatabaseRequest{
-			Database: input.Database,
-			Password: encodedPassword,
-			Type:     input.DatabaseType,
-			Name:     input.Name,
-			From:     "local",
-			Username: username,
-		}
-		var createURL string
-		if input.DatabaseType == "mysql" {
-			createURL = "/databases"
-			createReq.Format = "utf8mb4"
-			createReq.Permission = "%"
-		} else {
-			createURL = "/databases/pg"
-			createReq.Format = "UTF8"
-		}
-		res := &types.Response{}
-		result, err := utils.NewPanelClient("POST", createURL, utils.WithPayload(createReq)).Request(res)
-		if result != nil {
-			result.StructuredContent = res
-		}
-		return result, err
-	},
-)
+	createReq := &types.CreateDatabaseRequest{
+		Database: input.Database,
+		Password: encodedPassword,
+		Type:     input.DatabaseType,
+		Name:     input.Name,
+		From:     "local",
+		Username: username,
+	}
+	var createURL string
+	if input.DatabaseType == "mysql" {
+		createURL = "/databases"
+		createReq.Format = "utf8mb4"
+		createReq.Permission = "%"
+	} else {
+		createURL = "/databases/pg"
+		createReq.Format = "UTF8"
+	}
+	res := &types.Response{}
+	result, err := utils.NewPanelClient("POST", createURL, utils.WithPayload(createReq)).Request(res)
+	if result != nil {
+		result.StructuredContent = res
+	}
+	return utils.ToolResult(result, err)
+}
 
 type CreateDatabaseInput struct {
 	DatabaseType string `json:"database_type" jsonschema:"installed database app type, support mysql and postgresql"`

@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -27,13 +30,13 @@ var (
 
 func setupLogger() (*os.File, error) {
 	logDir := "logs"
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logDir, 0700); err != nil {
 		fmt.Printf("create log dir error: %v\n", err)
 		return nil, err
 	}
 
 	logFilePath := filepath.Join(logDir, "mcp-1panel.log")
-	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		fmt.Printf("open log file error: %v\n", err)
 		return nil, err
@@ -45,30 +48,32 @@ func setupLogger() (*os.File, error) {
 }
 
 func newMCPServer() *mcp.Server {
-	return mcp.NewServer(
-		"github.com/1Panel-dev/mcp-1panel",
-		Version,
-		nil,
-	)
+	return mcp.NewServer(&mcp.Implementation{
+		Name:    "github.com/1Panel-dev/mcp-1panel",
+		Version: Version,
+	}, nil)
 }
 
 func addTools(s *mcp.Server) {
-	s.AddTools(
-		system.GetSystemInfoTool,
-		system.GetDashboardInfoTool,
-		website.ListWebsitesTool,
-		website.CreateWebsiteTool,
-		ssl.ListSSLsTool,
-		ssl.CreateSSLTool,
-		app.InstallMySQLTool,
-		app.InstallOpenRestyTool,
-		app.ListInstalledAppsTool,
-		database.ListDatabasesTool,
-		database.CreateDatabaseTool,
-	)
+	system.RegisterTools(s)
+	website.RegisterTools(s)
+	ssl.RegisterTools(s)
+	app.RegisterTools(s)
+	database.RegisterTools(s)
 }
 
-func runServer(transport string, addr string) error {
+type httpSecurityConfig struct {
+	Token          string
+	AllowedOrigins []string
+	AllowInsecure  bool
+	AllowRemote    bool
+}
+
+func runServer(transport string, addr string, security httpSecurityConfig) error {
+	if err := validateHTTPTransportSecurity(transport, security); err != nil {
+		return err
+	}
+
 	mcpServer := newMCPServer()
 	addTools(mcpServer)
 
@@ -78,33 +83,36 @@ func runServer(transport string, addr string) error {
 	case "stdio":
 		ctx := context.Background()
 		log.Printf("Run Stdio server")
-		stdioTransport := mcp.NewStdioTransport()
+		stdioTransport := &mcp.StdioTransport{}
 		if err := mcpServer.Run(ctx, stdioTransport); err != nil {
 			return fmt.Errorf("server error: %w", err)
 		}
 		return nil
 	case "sse":
-		return serveSSE(addr, mcpServer)
+		return serveSSE(addr, mcpServer, security)
 	case "streamable", "streamable-http":
-		return serveStreamableHTTP(addr, mcpServer)
+		return serveStreamableHTTP(addr, mcpServer, security)
 	default:
 		return fmt.Errorf("unsupported transport %q", transport)
 	}
 }
 
-func serveSSE(addr string, server *mcp.Server) error {
-	handler := mcp.NewSSEHandler(func(*http.Request) *mcp.Server { return server })
-	return serveHTTPTransport("SSE", addr, handler)
+func serveSSE(addr string, server *mcp.Server, security httpSecurityConfig) error {
+	handler := mcp.NewSSEHandler(func(*http.Request) *mcp.Server { return server }, nil)
+	return serveHTTPTransport("SSE", addr, handler, security)
 }
 
-func serveStreamableHTTP(addr string, server *mcp.Server) error {
+func serveStreamableHTTP(addr string, server *mcp.Server, security httpSecurityConfig) error {
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
-	return serveHTTPTransport("Streamable HTTP", addr, handler)
+	return serveHTTPTransport("Streamable HTTP", addr, handler, security)
 }
 
-func serveHTTPTransport(label, addr string, handler http.Handler) error {
+func serveHTTPTransport(label, addr string, handler http.Handler, security httpSecurityConfig) error {
 	listenAddr, basePath, displayAddr, err := parseHTTPAddr(addr)
 	if err != nil {
+		return err
+	}
+	if err := validateHTTPListenAddr(listenAddr, security.AllowRemote); err != nil {
 		return err
 	}
 
@@ -115,7 +123,135 @@ func serveHTTPTransport(label, addr string, handler http.Handler) error {
 	}
 
 	log.Printf("%s transport listening on %s", label, displayAddr)
-	return http.ListenAndServe(listenAddr, mux)
+	srv := &http.Server{
+		Addr:              listenAddr,
+		Handler:           secureHTTPHandler(mux, security),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      0,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+	return srv.ListenAndServe()
+}
+
+func validateHTTPTransportSecurity(transport string, security httpSecurityConfig) error {
+	switch strings.ToLower(transport) {
+	case "stdio":
+		return nil
+	case "sse", "streamable", "streamable-http":
+		if security.AllowInsecure {
+			return nil
+		}
+		if security.Token == "" {
+			return fmt.Errorf("HTTP transport requires MCP authentication; set -mcp-token or MCP_AUTH_TOKEN, or explicitly use -allow-insecure-http")
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
+func validateHTTPListenAddr(listenAddr string, allowRemote bool) error {
+	if allowRemote {
+		return nil
+	}
+
+	host, _, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return fmt.Errorf("HTTP transport addr %q must include host and port (e.g. http://127.0.0.1:8000): %w", listenAddr, err)
+	}
+	if host == "" {
+		return fmt.Errorf("HTTP transport refuses wildcard listen address %q without -allow-remote-http", listenAddr)
+	}
+
+	host = strings.Trim(strings.ToLower(host), "[]")
+	if host == "localhost" {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && ip.IsLoopback() {
+		return nil
+	}
+
+	return fmt.Errorf("HTTP transport refuses non-loopback listen address %q without -allow-remote-http", listenAddr)
+}
+
+func secureHTTPHandler(next http.Handler, security httpSecurityConfig) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Printf("panic in HTTP transport handler: %v", recovered)
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			}
+		}()
+
+		if !originAllowed(r.Header.Get("Origin"), security.AllowedOrigins) {
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
+
+		if !security.AllowInsecure && !validMCPToken(r, security.Token) {
+			http.Error(w, "missing or invalid MCP authentication token", http.StatusUnauthorized)
+			return
+		}
+
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func validMCPToken(r *http.Request, expected string) bool {
+	if expected == "" {
+		return false
+	}
+
+	got := r.Header.Get("X-MCP-Token")
+	if got == "" {
+		auth := r.Header.Get("Authorization")
+		if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+			got = strings.TrimSpace(auth[len("Bearer "):])
+		}
+	}
+	if got == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
+}
+
+func originAllowed(origin string, allowed []string) bool {
+	if origin == "" {
+		return true
+	}
+	for _, candidate := range allowed {
+		if origin == candidate {
+			return true
+		}
+	}
+	if len(allowed) > 0 {
+		return false
+	}
+
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func parseAllowedOrigins(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	origins := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if origin := strings.TrimSpace(part); origin != "" {
+			origins = append(origins, origin)
+		}
+	}
+	return origins
 }
 
 func parseHTTPAddr(raw string) (listenAddr, basePath, displayAddr string, err error) {
@@ -159,15 +295,23 @@ func defaultScheme(s string) string {
 
 func main() {
 	var (
-		transport   string
-		accessToken string
-		host        string
-		addr        string
+		transport         string
+		accessToken       string
+		host              string
+		addr              string
+		mcpToken          string
+		allowedOriginsRaw string
+		allowInsecureHTTP bool
+		allowRemoteHTTP   bool
 	)
 	flag.StringVar(&transport, "transport", "stdio", "Transport type (stdio, sse, streamable-http)")
-	flag.StringVar(&addr, "addr", "http://localhost:8000", "Base URL (host, port, optional path) for HTTP transports")
+	flag.StringVar(&addr, "addr", "http://127.0.0.1:8000", "Base URL (host, port, optional path) for HTTP transports")
 	flag.StringVar(&accessToken, "token", "", "1Panel api key")
 	flag.StringVar(&host, "host", "", "1Panel host (example:http://127.0.0.1:9999)")
+	flag.StringVar(&mcpToken, "mcp-token", "", "MCP HTTP authentication token for sse and streamable-http transports")
+	flag.StringVar(&allowedOriginsRaw, "allowed-origins", "", "Comma-separated HTTP Origin allowlist for HTTP transports")
+	flag.BoolVar(&allowInsecureHTTP, "allow-insecure-http", false, "Allow unauthenticated HTTP transports; only use for local development")
+	flag.BoolVar(&allowRemoteHTTP, "allow-remote-http", false, "Allow HTTP transports to listen on non-loopback addresses; only use behind TLS")
 	flag.Parse()
 
 	if accessToken != "" {
@@ -177,8 +321,19 @@ func main() {
 		utils.SetHost(host)
 	}
 
-	if err := runServer(transport, addr); err != nil {
+	if mcpToken == "" {
+		mcpToken = os.Getenv("MCP_AUTH_TOKEN")
+	}
+
+	security := httpSecurityConfig{
+		Token:          mcpToken,
+		AllowedOrigins: parseAllowedOrigins(allowedOriginsRaw),
+		AllowInsecure:  allowInsecureHTTP,
+		AllowRemote:    allowRemoteHTTP,
+	}
+
+	if err := runServer(transport, addr, security); err != nil {
 		fmt.Printf("server run error: %v\n", err)
-		panic(err)
+		os.Exit(1)
 	}
 }

@@ -6,7 +6,7 @@
 
 ### Prerequisites
 
-- Go 1.23.0 or higher
+- Go 1.25.0 or higher
 - Existing 1Panel
 
 ### Build from Source
@@ -51,25 +51,37 @@
 
 start mcp server through sse
 ```
-mcp-1panel -host <your 1Panel access address> -token <your 1Panel access token> -transport sse -addr "http://localhost:8000"
+MCP_AUTH_TOKEN=<strong random MCP token> \
+PANEL_HOST=<your 1Panel access address> \
+PANEL_ACCESS_TOKEN=<your 1Panel access token> \
+mcp-1panel -transport sse -addr "http://127.0.0.1:8000/sse"
 ```
 
 ```json
 {
   "mcpServers": {
     "mcp-1panel": {
-        "url": "http://localhost:8000/sse"
+        "url": "http://127.0.0.1:8000/sse",
+        "headers": {
+          "Authorization": "Bearer <strong random MCP token>"
+        }
     }
   }
 }
 ```
 
+HTTP transports (`sse` and `streamable-http`) require an MCP authentication token by default. Use stdio for local desktop clients when possible. HTTP transports listen on loopback addresses only by default. If you expose an HTTP transport beyond loopback with `-allow-remote-http`, terminate TLS at a trusted reverse proxy and set an explicit Origin allowlist.
+
 ### Command Line Options
 
-- `-token`: 1Panel access token
-- `-host`: 1Panel access address
-- `-transport`: Transport type (stdio or sse, default: stdio)
-- `-addr`: Start SSE server addr (default:http://localhost:8000)
+- `-token`: 1Panel access token; prefer `PANEL_ACCESS_TOKEN` to avoid exposing secrets in process lists
+- `-host`: 1Panel access address; prefer `PANEL_HOST` for environment-based configuration
+- `-transport`: Transport type (stdio, sse, or streamable-http; default: stdio)
+- `-addr`: Base URL for HTTP transports (default: `http://127.0.0.1:8000`)
+- `-mcp-token`: MCP HTTP authentication token for HTTP transports
+- `-allowed-origins`: Comma-separated Origin allowlist for HTTP transports
+- `-allow-insecure-http`: Allow unauthenticated HTTP transports; only use for local development
+- `-allow-remote-http`: Allow HTTP transports to listen on non-loopback addresses; only use behind TLS
 
 ### Environment Variables
 
@@ -77,6 +89,7 @@ You can also configure the server using environment variables:
 
 - `PANEL_HOST`: 1Panel access address
 - `PANEL_ACCESS_TOKEN`: 1Panel access token
+- `MCP_AUTH_TOKEN`: MCP HTTP authentication token for `sse` and `streamable-http`
 
 ## Available Tools
 
@@ -95,4 +108,3 @@ The server provides various tools for interacting with 1Panel:
 | **install_mysql**           | Application | Install MySQL         |
 | **list_databases**          | Database | List all databases     |
 | **create_database**         | Database | Create a database      |
-

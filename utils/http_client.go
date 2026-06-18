@@ -13,15 +13,18 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 var (
-	accessToken string
-	apiBase     string
-	timestamp   string
+	panelAccessToken string
+	apiBase          string
+	configMu         sync.RWMutex
+	nowFunc          = time.Now
 )
 
 func md5Sum(data string) string {
@@ -31,34 +34,46 @@ func md5Sum(data string) string {
 }
 
 func SetAccessToken(token string) {
-	timestamp = strconv.FormatInt(time.Now().Unix(), 10)
-	accessToken = md5Sum("1panel" + token + timestamp)
+	configMu.Lock()
+	panelAccessToken = token
+	configMu.Unlock()
 }
 
 func SetHost(host string) {
+	configMu.Lock()
 	apiBase = fmt.Sprintf("%s%s", host, ApiBase)
+	configMu.Unlock()
 }
 
 func GetAccessToken() string {
-	if accessToken != "" {
-		return accessToken
+	configMu.RLock()
+	token := panelAccessToken
+	configMu.RUnlock()
+	if token != "" {
+		return token
 	}
-	if token := os.Getenv("PANEL_ACCESS_TOKEN"); token != "" {
-		SetAccessToken(token)
-		return accessToken
+	if envToken := os.Getenv("PANEL_ACCESS_TOKEN"); envToken != "" {
+		SetAccessToken(envToken)
+		return envToken
 	}
-	return accessToken
+	return ""
 }
 
 func GetApiBase() string {
-	if apiBase != "" {
-		return apiBase
+	configMu.RLock()
+	base := apiBase
+	configMu.RUnlock()
+	if base != "" {
+		return base
 	}
 	if host := os.Getenv("PANEL_HOST"); host != "" {
 		SetHost(host)
-		return apiBase
+		configMu.RLock()
+		base = apiBase
+		configMu.RUnlock()
+		return base
 	}
-	return apiBase
+	return ""
 }
 
 type PanelClient struct {
@@ -98,14 +113,10 @@ func NewPanelError(code int, message, details string) *PanelError {
 func NewAPIError(statusCode int, body []byte) error {
 	var errMsg ErrMsg
 	if err := json.Unmarshal(body, &errMsg); err != nil {
-		details := string(body)
-		if details == "" {
-			details = "No error details available"
-		}
-		return NewPanelError(statusCode, http.StatusText(statusCode), details)
+		return NewPanelError(statusCode, http.StatusText(statusCode), "Panel API returned a non-JSON error response")
 	}
 
-	return NewPanelError(statusCode, http.StatusText(statusCode), errMsg.Message)
+	return NewPanelError(statusCode, http.StatusText(statusCode), sanitizePanelDetails(errMsg.Message))
 }
 
 func NewAuthError() error {
@@ -241,7 +252,8 @@ func (p *PanelClient) Do() (*PanelClient, error) {
 		return nil, NewAuthError()
 	}
 
-	req.Header.Set("1Panel-Token", token)
+	timestamp := strconv.FormatInt(nowFunc().Unix(), 10)
+	req.Header.Set("1Panel-Token", md5Sum("1panel"+token+timestamp))
 	req.Header.Set("1Panel-Timestamp", timestamp)
 
 	for key, value := range p.Headers {
@@ -264,6 +276,26 @@ func (p *PanelClient) Do() (*PanelClient, error) {
 	}
 
 	return p, nil
+}
+
+func sanitizePanelDetails(details string) string {
+	details = strings.TrimSpace(details)
+	if details == "" {
+		return "No error details available"
+	}
+	const maxErrorDetails = 512
+	if len(details) > maxErrorDetails {
+		return details[:maxErrorDetails] + "..."
+	}
+	return details
+}
+
+func resetPanelConfigForTest() {
+	configMu.Lock()
+	panelAccessToken = ""
+	apiBase = ""
+	nowFunc = time.Now
+	configMu.Unlock()
 }
 
 func (p *PanelClient) IsSuccess() bool {
