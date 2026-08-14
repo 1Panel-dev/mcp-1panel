@@ -21,7 +21,7 @@ func installMySQL(ctx context.Context, _ *mcp.CallToolRequest, input InstallMySQ
 	}
 
 	appRes := &types.AppRes{}
-	result, err := utils.NewPanelClient("GET", "/apps/mysql").Request(appRes)
+	result, err := utils.NewPanelClient("GET", "/apps/mysql").Request(ctx, appRes)
 	if err != nil {
 		return utils.ToolResult(result, err)
 	}
@@ -34,7 +34,7 @@ func installMySQL(ctx context.Context, _ *mcp.CallToolRequest, input InstallMySQ
 	appID := appRes.Data.ID
 	appDetailURL := fmt.Sprintf("/apps/detail/%d/%s/app", appID, version)
 	appDetailRes := &types.AppDetailRes{}
-	result, err = utils.NewPanelClient("GET", appDetailURL).Request(appDetailRes)
+	result, err = utils.NewPanelClient("GET", appDetailURL).Request(ctx, appDetailRes)
 	if err != nil {
 		return utils.ToolResult(result, err)
 	}
@@ -63,7 +63,7 @@ func installMySQL(ctx context.Context, _ *mcp.CallToolRequest, input InstallMySQ
 		},
 	}
 	res := &types.Response{}
-	result, err = utils.NewPanelClient("POST", "/apps/install", utils.WithPayload(req)).Request(res)
+	result, err = utils.NewPanelClient("POST", "/apps/install", utils.WithPayload(req)).Request(ctx, res)
 	if result != nil {
 		result.StructuredContent = res
 	}
@@ -71,7 +71,7 @@ func installMySQL(ctx context.Context, _ *mcp.CallToolRequest, input InstallMySQ
 }
 
 type InstallMySQLInput struct {
-	Name         string  `json:"name" jsonschema:"mysql name"`
+	Name         string  `json:"name,omitempty" jsonschema:"mysql name"`
 	Version      string  `json:"version,omitempty" jsonschema:"mysql version, not support latest version"`
 	RootPassword string  `json:"root_password,omitempty" jsonschema:"mysql root password"`
 	Port         float64 `json:"port,omitempty" jsonschema:"mysql port"`

@@ -32,3 +32,4 @@ __debug*
 build
 logs
 .gocache
+docs/plan/

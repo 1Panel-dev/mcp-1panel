@@ -35,7 +35,7 @@ func installOpenResty(ctx context.Context, _ *mcp.CallToolRequest, input Install
 	}
 
 	appRes := &types.AppRes{}
-	result, err := utils.NewPanelClient("GET", "/apps/openresty").Request(appRes)
+	result, err := utils.NewPanelClient("GET", "/apps/openresty").Request(ctx, appRes)
 	if err != nil {
 		return utils.ToolResult(result, err)
 	}
@@ -46,7 +46,7 @@ func installOpenResty(ctx context.Context, _ *mcp.CallToolRequest, input Install
 	appID := appRes.Data.ID
 	appDetailURL := fmt.Sprintf("/apps/detail/%d/%s/app", appID, version)
 	appDetailRes := &types.AppDetailRes{}
-	result, err = utils.NewPanelClient("GET", appDetailURL).Request(appDetailRes)
+	result, err = utils.NewPanelClient("GET", appDetailURL).Request(ctx, appDetailRes)
 	if err != nil {
 		return utils.ToolResult(result, err)
 	}
@@ -62,7 +62,7 @@ func installOpenResty(ctx context.Context, _ *mcp.CallToolRequest, input Install
 		},
 	}
 	res := &types.Response{}
-	result, err = utils.NewPanelClient("POST", "/apps/install", utils.WithPayload(req)).Request(res)
+	result, err = utils.NewPanelClient("POST", "/apps/install", utils.WithPayload(req)).Request(ctx, res)
 	if result != nil {
 		result.StructuredContent = res
 	}

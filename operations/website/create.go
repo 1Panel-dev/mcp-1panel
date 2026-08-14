@@ -40,7 +40,7 @@ func createWebsite(ctx context.Context, _ *mcp.CallToolRequest, input CreateWebs
 		Type: "website",
 	}
 	groupRes := &types.GroupRes{}
-	result, err := utils.NewPanelClient("POST", "/groups/search", utils.WithPayload(groupReq)).Request(groupRes)
+	result, err := utils.NewPanelClient("POST", "/groups/search", utils.WithPayload(groupReq)).Request(ctx, groupRes)
 	if err != nil {
 		return utils.ToolResult(result, err)
 	}
@@ -67,7 +67,7 @@ func createWebsite(ctx context.Context, _ *mcp.CallToolRequest, input CreateWebs
 		AppType:        "new",
 	}
 	res := &types.Response{}
-	result, err = utils.NewPanelClient("POST", "/websites", utils.WithPayload(req)).Request(res)
+	result, err = utils.NewPanelClient("POST", "/websites", utils.WithPayload(req)).Request(ctx, res)
 	if result != nil {
 		result.StructuredContent = res
 	}

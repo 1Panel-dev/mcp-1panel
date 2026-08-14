@@ -19,7 +19,7 @@ func listInstalledApps(ctx context.Context, _ *mcp.CallToolRequest, input ListIn
 		PageSize: 500,
 	}
 	appListRes := &types.AppInstalledListResponse{}
-	result, err := utils.NewPanelClient("POST", "/apps/installed/search", utils.WithPayload(req)).Request(appListRes)
+	result, err := utils.NewPanelClient("POST", "/apps/installed/search", utils.WithPayload(req)).Request(ctx, appListRes)
 	if result != nil {
 		result.StructuredContent = appListRes
 	}

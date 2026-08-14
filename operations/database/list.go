@@ -29,7 +29,7 @@ func listDatabases(ctx context.Context, _ *mcp.CallToolRequest, input ListDataba
 		Database: database,
 	}
 	databaseListRes := &types.DatabaseListResponse{}
-	result, err := utils.NewPanelClient("POST", "/databases/search", utils.WithPayload(pageReq)).Request(databaseListRes)
+	result, err := utils.NewPanelClient("POST", "/databases/search", utils.WithPayload(pageReq)).Request(ctx, databaseListRes)
 	if result != nil {
 		result.StructuredContent = databaseListRes
 	}

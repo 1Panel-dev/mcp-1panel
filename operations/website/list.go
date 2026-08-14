@@ -25,7 +25,7 @@ func listWebsites(ctx context.Context, _ *mcp.CallToolRequest, input ListWebsite
 	}
 	client := utils.NewPanelClient("POST", "/websites/search", utils.WithPayload(req))
 	listWebsiteRes := &types.ListWebsiteRes{}
-	result, err := client.Request(listWebsiteRes)
+	result, err := client.Request(ctx, listWebsiteRes)
 	if result != nil {
 		result.StructuredContent = listWebsiteRes
 	}

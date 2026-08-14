@@ -30,7 +30,7 @@ func createSSL(ctx context.Context, _ *mcp.CallToolRequest, input CreateSSLInput
 		Page:     1,
 		PageSize: 500,
 	}
-	result, err := utils.NewPanelClient("POST", "/websites/acme/search", utils.WithPayload(pageReq)).Request(acmeRes)
+	result, err := utils.NewPanelClient("POST", "/websites/acme/search", utils.WithPayload(pageReq)).Request(ctx, acmeRes)
 	if err != nil {
 		return utils.ToolResult(result, err)
 	}
@@ -42,7 +42,7 @@ func createSSL(ctx context.Context, _ *mcp.CallToolRequest, input CreateSSLInput
 	var dnsAccountID uint
 	if input.Provider == "dnsAccount" {
 		dnsAccountRes := &types.ListDNSAccountRes{}
-		result, err = utils.NewPanelClient("POST", "/websites/dns/search", utils.WithPayload(pageReq)).Request(dnsAccountRes)
+		result, err = utils.NewPanelClient("POST", "/websites/dns/search", utils.WithPayload(pageReq)).Request(ctx, dnsAccountRes)
 		if err != nil {
 			return utils.ToolResult(result, err)
 		}
@@ -76,7 +76,7 @@ func createSSL(ctx context.Context, _ *mcp.CallToolRequest, input CreateSSLInput
 		KeyType:       "P256",
 	}
 	res := &types.Response{}
-	result, err = utils.NewPanelClient("POST", "/websites/ssl", utils.WithPayload(req)).Request(res)
+	result, err = utils.NewPanelClient("POST", "/websites/ssl", utils.WithPayload(req)).Request(ctx, res)
 	if result != nil {
 		result.StructuredContent = res
 	}

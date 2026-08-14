@@ -16,7 +16,7 @@ const (
 func getDashboardInfo(ctx context.Context, _ *mcp.CallToolRequest, input GetDashboardInfoInput) (*mcp.CallToolResult, any, error) {
 	client := utils.NewPanelClient("GET", "/dashboard/base/all/all")
 	info := &types.DashboardRes{}
-	result, err := client.Request(info)
+	result, err := client.Request(ctx, info)
 	if result != nil {
 		result.StructuredContent = info
 	}

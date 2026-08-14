@@ -19,7 +19,7 @@ func listSSLs(ctx context.Context, _ *mcp.CallToolRequest, input ListSSLsInput) 
 		PageSize: 500,
 	}
 	listWebsiteSSLRes := &types.ListWebsiteSSLRes{}
-	result, err := utils.NewPanelClient("POST", "/websites/ssl/search", utils.WithPayload(req)).Request(listWebsiteSSLRes)
+	result, err := utils.NewPanelClient("POST", "/websites/ssl/search", utils.WithPayload(req)).Request(ctx, listWebsiteSSLRes)
 	if result != nil {
 		result.StructuredContent = listWebsiteSSLRes
 	}

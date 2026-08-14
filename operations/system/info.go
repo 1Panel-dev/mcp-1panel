@@ -16,7 +16,7 @@ const (
 func getSystemInfo(ctx context.Context, _ *mcp.CallToolRequest, input GetSystemInfoInput) (*mcp.CallToolResult, any, error) {
 	client := utils.NewPanelClient("GET", "/dashboard/base/os")
 	osInfo := &types.OsInfoRes{}
-	result, err := client.Request(osInfo)
+	result, err := client.Request(ctx, osInfo)
 	if result != nil {
 		result.StructuredContent = osInfo
 	}

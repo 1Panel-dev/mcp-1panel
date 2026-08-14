@@ -62,7 +62,7 @@ func createDatabase(ctx context.Context, _ *mcp.CallToolRequest, input CreateDat
 		createReq.Format = "UTF8"
 	}
 	res := &types.Response{}
-	result, err := utils.NewPanelClient("POST", createURL, utils.WithPayload(createReq)).Request(res)
+	result, err := utils.NewPanelClient("POST", createURL, utils.WithPayload(createReq)).Request(ctx, res)
 	if result != nil {
 		result.StructuredContent = res
 	}

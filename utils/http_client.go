@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
@@ -25,7 +26,15 @@ var (
 	apiBase          string
 	configMu         sync.RWMutex
 	nowFunc          = time.Now
+	panelHTTPClient  = &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 )
+
+const maxPanelResponseBody = 4 << 20
 
 func md5Sum(data string) string {
 	h := md5.New()
@@ -41,7 +50,11 @@ func SetAccessToken(token string) {
 
 func SetHost(host string) {
 	configMu.Lock()
-	apiBase = fmt.Sprintf("%s%s", host, ApiBase)
+	if host == "" {
+		apiBase = ""
+	} else {
+		apiBase = fmt.Sprintf("%s%s", host, ApiBase)
+	}
 	configMu.Unlock()
 }
 
@@ -227,7 +240,7 @@ func (p *PanelClient) SetHeaders(headers map[string]string) *PanelClient {
 	return p
 }
 
-func (p *PanelClient) Do() (*PanelClient, error) {
+func (p *PanelClient) Do(ctx context.Context) (*PanelClient, error) {
 	p.Response = nil
 	var reqBody io.Reader
 
@@ -239,7 +252,7 @@ func (p *PanelClient) Do() (*PanelClient, error) {
 		reqBody = bytes.NewReader(_payload)
 	}
 
-	req, err := http.NewRequest(p.Method, p.Url, reqBody)
+	req, err := http.NewRequestWithContext(ctx, p.Method, p.Url, reqBody)
 	if err != nil {
 		return nil, NewInternalError(err)
 	}
@@ -260,10 +273,7 @@ func (p *PanelClient) Do() (*PanelClient, error) {
 		req.Header.Set(key, value)
 	}
 
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-	resp, err := client.Do(req)
+	resp, err := panelHTTPClient.Do(req)
 	if err != nil {
 		return p, NewNetworkError(err)
 	}
@@ -271,7 +281,11 @@ func (p *PanelClient) Do() (*PanelClient, error) {
 	p.Response = resp
 
 	if !p.IsSuccess() {
-		body, _ := io.ReadAll(resp.Body)
+		defer resp.Body.Close()
+		body, readErr := readPanelResponseBody(resp.Body)
+		if readErr != nil {
+			return p, NewPanelError(resp.StatusCode, http.StatusText(resp.StatusCode), sanitizePanelDetails(readErr.Error()))
+		}
 		return p, NewAPIError(resp.StatusCode, body)
 	}
 
@@ -302,17 +316,7 @@ func (p *PanelClient) IsSuccess() bool {
 	if p.Response == nil {
 		return false
 	}
-
-	successMap := map[int]struct{}{
-		http.StatusOK:          {},
-		http.StatusCreated:     {},
-		http.StatusNoContent:   {},
-		http.StatusFound:       {},
-		http.StatusNotModified: {},
-	}
-
-	_, ok := successMap[p.Response.StatusCode]
-	return ok
+	return p.Response.StatusCode >= http.StatusOK && p.Response.StatusCode < http.StatusMultipleChoices
 }
 
 func (p *PanelClient) IsFail() bool {
@@ -324,7 +328,19 @@ func (p *PanelClient) GetRespBody() ([]byte, error) {
 		return nil, errors.New("response or response body is nil")
 	}
 	defer p.Response.Body.Close()
-	return io.ReadAll(p.Response.Body)
+	return readPanelResponseBody(p.Response.Body)
+}
+
+func readPanelResponseBody(body io.Reader) ([]byte, error) {
+	limited := io.LimitReader(body, maxPanelResponseBody+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxPanelResponseBody {
+		return nil, fmt.Errorf("Panel API response exceeds %d bytes", maxPanelResponseBody)
+	}
+	return data, nil
 }
 
 func (p *PanelClient) ParseJSON(v interface{}) error {
@@ -335,49 +351,10 @@ func (p *PanelClient) ParseJSON(v interface{}) error {
 	return json.Unmarshal(body, v)
 }
 
-func (p *PanelClient) Request(object any) (*mcp.CallToolResult, error) {
-	_, err := p.Do()
+func (p *PanelClient) Request(ctx context.Context, object any) (*mcp.CallToolResult, error) {
+	_, err := p.Do(ctx)
 	if err != nil {
-		switch {
-		case IsAuthError(err):
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					&mcp.TextContent{Text: "Authentication failed: Please check your Panel access token"},
-				},
-				IsError: true,
-			}, err
-		case IsNetworkError(err):
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					&mcp.TextContent{Text: "Network error: Unable to connect to Panel API"},
-				},
-				IsError: true,
-			}, err
-		case IsAPIError(err):
-			var panelErr *PanelError
-			errors.As(err, &panelErr)
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					&mcp.TextContent{Text: fmt.Sprintf("API error (%d): %s", panelErr.Code, panelErr.Details)},
-				},
-				IsError: true,
-			}, err
-		default:
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					&mcp.TextContent{Text: err.Error()},
-				},
-				IsError: true,
-			}, err
-		}
-	}
-
-	if object == nil {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: "Operation completed successfully"},
-			},
-		}, nil
+		return panelToolError(err)
 	}
 
 	body, err := p.GetRespBody()
@@ -388,6 +365,28 @@ func (p *PanelClient) Request(object any) (*mcp.CallToolResult, error) {
 			},
 			IsError: true,
 		}, NewInternalError(err)
+	}
+
+	if len(bytes.TrimSpace(body)) > 0 {
+		var envelope struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(body, &envelope); err == nil && envelope.Code != 0 && envelope.Code != http.StatusOK {
+			message := strings.TrimSpace(envelope.Message)
+			if message == "" {
+				message = "Panel API request failed"
+			}
+			return panelToolError(NewPanelError(envelope.Code, message, sanitizePanelDetails(message)))
+		}
+	}
+
+	if object == nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: "Operation completed successfully"},
+			},
+		}, nil
 	}
 
 	if err = json.Unmarshal(body, object); err != nil {
@@ -416,4 +415,22 @@ func (p *PanelClient) Request(object any) (*mcp.CallToolResult, error) {
 		},
 		StructuredContent: object,
 	}, nil
+}
+
+func panelToolError(err error) (*mcp.CallToolResult, error) {
+	text := err.Error()
+	switch {
+	case IsAuthError(err):
+		text = "Authentication failed: Please check your Panel access token"
+	case IsNetworkError(err):
+		text = "Network error: Unable to connect to Panel API"
+	case IsAPIError(err):
+		var panelErr *PanelError
+		errors.As(err, &panelErr)
+		text = fmt.Sprintf("API error (%d): %s", panelErr.Code, panelErr.Details)
+	}
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: text}},
+		IsError: true,
+	}, err
 }
