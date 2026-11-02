@@ -1,15 +1,14 @@
 name: Build and Release MCP-1Panel
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Release version (e.g. v1.0.0)'
-        required: true
-        type: string
+  release:
+    types: [published]
+
+permissions:
+  contents: read
 
 env:
-  IMAGE_NAME: 1panel/1panel-mcp-server
+  IMAGE_NAME: 1panel/mcp-server
 
 jobs:
   build:
@@ -17,6 +16,8 @@ jobs:
     strategy:
       matrix:
         include:
+          - goos: linux
+            goarch: '386'
           - goos: linux
             goarch: amd64
           - goos: linux
@@ -28,26 +29,38 @@ jobs:
             goarch: s390x
           - goos: linux
             goarch: ppc64le
+          - goos: linux
+            goarch: riscv64
 
     name: Build for ${{ matrix.goos }}-${{ matrix.goarch }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.27.3'
+
+      - name: Test
+        run: |
+          go test ./...
+          make docker_test
 
       - name: Build Binary
+        env:
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
         run: |
+          sh scripts/validate-version.sh "$RELEASE_VERSION"
           mkdir -p build
           FILE_NAME=mcp-1panel-${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goarch }}" = "arm" ]; then
             FILE_NAME="${FILE_NAME}v${{ matrix.goarm }}"
           fi
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM=${{ matrix.goarm || '' }} \
-          go build -trimpath -ldflags '-s -w' -o build/${FILE_NAME} ./main.go
+          go build -trimpath -ldflags "-s -w -X github.com/1Panel-dev/mcp-1panel/utils.Version=${RELEASE_VERSION}" -o build/${FILE_NAME} .
           chmod +x build/${FILE_NAME}
 
       - name: Upload binary artifact
@@ -59,7 +72,9 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    name: Create GitHub Release
+    permissions:
+      contents: write
+    name: Upload GitHub Release Assets
     steps:
       - name: Download all binary artifacts
         uses: actions/download-artifact@v4
@@ -71,18 +86,52 @@ jobs:
           mkdir -p final-release
           find ./release-assets -type f -exec mv {} final-release/ \;
 
+      - name: Generate SHA256 checksums
+        working-directory: final-release
+        run: sha256sum mcp-1panel-* > SHA256SUMS
+
       - name: List final files
         run: ls -lh final-release
 
-      - name: Generate checksums
-        run: |
-          cd final-release
-          sha256sum * > SHA256SUMS
-
-      - name: Create GitHub Release Draft
+      - name: Upload assets to published release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.version }}
-          name: ${{ github.event.inputs.version }}
-          draft: true
+          tag_name: ${{ github.event.release.tag_name }}
           files: final-release/*
+
+  docker:
+    needs: build
+    runs-on: ubuntu-latest
+    name: Build and Push Docker Image
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        id: buildx
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/386,linux/amd64,linux/arm64,linux/arm/v7,linux/s390x,linux/ppc64le,linux/riscv64
+          build-args: |
+            VERSION=${{ github.event.release.tag_name }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name }}
+            ${{ !github.event.release.prerelease && !contains(github.event.release.tag_name, '-') && format('{0}:latest', env.IMAGE_NAME) || '' }}

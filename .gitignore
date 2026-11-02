@@ -33,3 +33,4 @@ build
 logs
 .gocache
 docs/plan/
+*_test.go

@@ -1,0 +1,38 @@
+services:
+  mcp:
+    image: "${MCP_IMAGE:-1panel/mcp-server}:${MCP_VERSION:?Set MCP_VERSION to an explicit release version}"
+    container_name: "${MCP_CONTAINER_NAME:-1panel-mcp}"
+    labels:
+      io.1panel.mcp.managed: "true"
+      io.1panel.mcp.image: "${MCP_IMAGE:-1panel/mcp-server}:${MCP_VERSION:?Set MCP_VERSION to an explicit release version}"
+      io.1panel.mcp.port: "18081"
+      io.1panel.mcp.version: "${MCP_VERSION:?Set MCP_VERSION to an explicit release version}"
+    user: "0:0"
+    network_mode: host
+    command:
+      - --mode=panel
+      - --listen=127.0.0.1:18081
+      - --panel-socket=/etc/1panel/mcp-runtime/core.sock
+    volumes:
+      - type: bind
+        source: /etc/1panel/mcp-runtime
+        target: /etc/1panel/mcp-runtime
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 1.0
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/mcp-1panel", "--healthcheck", "--listen=127.0.0.1:18081"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
