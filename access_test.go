@@ -43,14 +43,26 @@ func TestToolAccessAndMetadata(t *testing.T) {
 		want  []string
 	}{
 		{AccessReadOnly, []string{
-			"get_system_info", "get_dashboard_info", "list_websites", "list_ssls", "list_installed_apps", "list_databases",
+			"list_nodes", "get_system_info", "get_dashboard_info",
+			"list_websites", "get_website", "list_website_domains", "get_website_https",
+			"list_ssls", "get_ssl_metadata",
+			"list_installed_apps", "get_installed_app", "list_app_versions",
+			"list_databases", "list_mysql_instances", "get_mysql_status",
 		}},
 		{AccessReadWrite, []string{
-			"get_system_info", "get_dashboard_info", "list_websites", "list_ssls", "list_installed_apps", "list_databases",
+			"list_nodes", "get_system_info", "get_dashboard_info",
+			"list_websites", "get_website", "list_website_domains", "get_website_https",
+			"list_ssls", "get_ssl_metadata",
+			"list_installed_apps", "get_installed_app", "list_app_versions",
+			"list_databases", "list_mysql_instances", "get_mysql_status",
 			"create_website", "create_ssl", "create_database",
 		}},
 		{AccessFull, []string{
-			"get_system_info", "get_dashboard_info", "list_websites", "list_ssls", "list_installed_apps", "list_databases",
+			"list_nodes", "get_system_info", "get_dashboard_info",
+			"list_websites", "get_website", "list_website_domains", "get_website_https",
+			"list_ssls", "get_ssl_metadata",
+			"list_installed_apps", "get_installed_app", "list_app_versions",
+			"list_databases", "list_mysql_instances", "get_mysql_status",
 			"create_website", "create_ssl", "create_database", "install_mysql", "install_openresty",
 		}},
 	}
@@ -72,7 +84,10 @@ func TestToolAccessAndMetadata(t *testing.T) {
 					t.Fatalf("tool %s has incorrect readOnlyHint", tool.Name)
 				}
 				if tool.Name == "install_mysql" {
-					assertSchemaPropertyOptional(t, tool.InputSchema, "name")
+					assertSchemaRequired(t, tool.InputSchema, []string{"name", "version", "port", "root_password"})
+				}
+				if tool.Name == "install_openresty" {
+					assertSchemaRequired(t, tool.InputSchema, []string{"name", "version", "http_port", "https_port"})
 				}
 			}
 			slices.Sort(got)
@@ -84,7 +99,7 @@ func TestToolAccessAndMetadata(t *testing.T) {
 	}
 }
 
-func assertSchemaPropertyOptional(t *testing.T, schema any, property string) {
+func assertSchemaRequired(t *testing.T, schema any, want []string) {
 	t.Helper()
 	data, err := json.Marshal(schema)
 	if err != nil {
@@ -96,8 +111,10 @@ func assertSchemaPropertyOptional(t *testing.T, schema any, property string) {
 	if err := json.Unmarshal(data, &metadata); err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(metadata.Required, property) {
-		t.Fatalf("schema property %q is unexpectedly required", property)
+	slices.Sort(metadata.Required)
+	slices.Sort(want)
+	if !slices.Equal(metadata.Required, want) {
+		t.Fatalf("required fields = %v, want %v", metadata.Required, want)
 	}
 }
 

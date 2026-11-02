@@ -1,7 +1,3 @@
 package utils
 
-var (
-	Version = "0.2.0"
-
-	ApiBase = "/api/v2"
-)
+var Version = "v2.0.0-rc1"

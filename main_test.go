@@ -3,15 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/1Panel-dev/mcp-1panel/utils"
+	"github.com/1Panel-dev/mcp-1panel/internal/legacy"
+	"github.com/1Panel-dev/mcp-1panel/internal/toolset/shared"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -92,25 +94,31 @@ func TestHTTPTransportMatchesOnlyConfiguredEndpoint(t *testing.T) {
 
 func TestStreamableHTTPEndToEnd(t *testing.T) {
 	const token = "test-token"
-	panelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var panelCalls atomic.Int32
+	panelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"code":500,"message":"Panel operation failed"}`)
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v2/dashboard/base/os" || r.Header.Get("CurrentNode") != "local" {
+			t.Errorf("unexpected public API request: %s %s node=%q", r.Method, r.URL.Path, r.Header.Get("CurrentNode"))
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("1Panel-Token") == "" || r.Header.Get("1Panel-Timestamp") == "" || r.Header.Get("Authorization") != "" {
+			t.Error("public API call must use its own signed API Key identity")
+		}
+		if panelCalls.Add(1) == 1 {
+			_, _ = io.WriteString(w, `{"code":200,"data":{"os":"linux","password":"RAW_SECRET"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"code":500,"message":"RAW_SECRET Panel operation failed"}`)
 	}))
 	t.Cleanup(panelServer.Close)
-	utils.SetHost(panelServer.URL)
-	utils.SetAccessToken("panel-token")
-	t.Cleanup(func() {
-		utils.SetHost("")
-		utils.SetAccessToken("")
-	})
+	panelClient, err := legacy.NewClient(legacy.Config{Host: panelServer.URL, APIKey: "panel-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(panelClient.Close)
 
-	mcpServer := newMCPServer(AccessReadOnly)
-	mcpServer.AddTool(&mcp.Tool{
-		Name:        "test_ping",
-		InputSchema: map[string]any{"type": "object", "additionalProperties": false},
-	}, func(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "pong"}}}, nil
-	})
+	mcpServer := newMCPServer(AccessReadOnly, panelClient)
 	handler := newHTTPTransportHandler(
 		"/mcp",
 		newStreamableHTTPHandler(mcpServer, time.Minute),
@@ -123,6 +131,7 @@ func TestStreamableHTTPEndToEnd(t *testing.T) {
 		clone := request.Clone(request.Context())
 		clone.Header = request.Header.Clone()
 		clone.Header.Set("Authorization", "Bearer "+token)
+		clone.Header.Set("Accept-Language", "en-US")
 		return http.DefaultTransport.RoundTrip(clone)
 	})}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -142,19 +151,36 @@ func TestStreamableHTTPEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Tools) != 7 {
-		t.Fatalf("tools = %d, want 7", len(result.Tools))
+	if len(result.Tools) != 15 {
+		t.Fatalf("tools = %d, want 15 read-only tools", len(result.Tools))
 	}
-	callResult, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "test_ping"})
+	foundSystemInfo := false
+	for _, tool := range result.Tools {
+		if !AccessReadOnly.allowsTool(tool.Name) {
+			t.Fatalf("read-only catalog exposed tool %q", tool.Name)
+		}
+		foundSystemInfo = foundSystemInfo || tool.Name == "get_system_info"
+	}
+	if !foundSystemInfo {
+		t.Fatal("system information tool is missing from the catalog")
+	}
+	callResult, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "get_system_info"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(callResult.Content) != 1 {
+	if callResult.IsError || len(callResult.Content) != 1 {
 		t.Fatalf("call content = %#v", callResult.Content)
 	}
 	text, ok := callResult.Content[0].(*mcp.TextContent)
-	if !ok || text.Text != "pong" {
+	if !ok {
 		t.Fatalf("call result = %#v", callResult.Content)
+	}
+	var output struct {
+		NodeID string            `json:"nodeId"`
+		Result map[string]string `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(text.Text), &output); err != nil || output.NodeID != "local" || len(output.Result) != 1 || output.Result["os"] != "linux" {
+		t.Fatalf("unexpected or unprojected system information: %s (%v)", text.Text, err)
 	}
 	errorResult, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "get_system_info"})
 	if err != nil {
@@ -164,8 +190,15 @@ func TestStreamableHTTPEndToEnd(t *testing.T) {
 		t.Fatalf("Panel business error result = %#v", errorResult)
 	}
 	errorText, ok := errorResult.Content[0].(*mcp.TextContent)
-	if !ok || !strings.Contains(errorText.Text, "API error (500)") {
+	if !ok {
 		t.Fatalf("Panel business error content = %#v", errorResult.Content)
+	}
+	var failure shared.ExecutionError
+	if err := json.Unmarshal([]byte(errorText.Text), &failure); err != nil || failure.Code != "MCP_EXECUTION_FAILED" || failure.Message != shared.SystemInfoFailedMessage {
+		t.Fatalf("unexpected or unsafe system information error: %s (%v)", errorText.Text, err)
+	}
+	if calls := panelCalls.Load(); calls != 2 {
+		t.Fatalf("public API calls = %d, want one success and one failed read", calls)
 	}
 }
 

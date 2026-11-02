@@ -4,11 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/1Panel-dev/mcp-1panel/operations/app"
-	"github.com/1Panel-dev/mcp-1panel/operations/database"
-	"github.com/1Panel-dev/mcp-1panel/operations/ssl"
-	"github.com/1Panel-dev/mcp-1panel/operations/system"
-	"github.com/1Panel-dev/mcp-1panel/operations/website"
+	"github.com/1Panel-dev/mcp-1panel/internal/toolset"
 )
 
 type AccessLevel uint8
@@ -19,19 +15,20 @@ const (
 	AccessFull
 )
 
-var minimumToolAccess = map[string]AccessLevel{
-	system.GetSystemInfo:    AccessReadOnly,
-	system.GetDashboardInfo: AccessReadOnly,
-	website.ListWebsites:    AccessReadOnly,
-	ssl.ListSSLs:            AccessReadOnly,
-	app.ListInstalledApps:   AccessReadOnly,
-	database.ListDatabases:  AccessReadOnly,
-	website.CreateWebsite:   AccessReadWrite,
-	ssl.CreateSSL:           AccessReadWrite,
-	database.CreateDatabase: AccessReadWrite,
-	app.InstallMySQL:        AccessFull,
-	app.InstallOpenResty:    AccessFull,
-}
+var minimumToolAccess = func() map[string]AccessLevel {
+	result := make(map[string]AccessLevel)
+	for _, spec := range toolset.All() {
+		level := AccessReadWrite
+		if spec.Definition.ReadOnly {
+			level = AccessReadOnly
+		}
+		if spec.Definition.ToolID == "install_mysql" || spec.Definition.ToolID == "install_openresty" {
+			level = AccessFull
+		}
+		result[spec.Definition.ToolID] = level
+	}
+	return result
+}()
 
 func parseAccessLevel(value string) (AccessLevel, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {

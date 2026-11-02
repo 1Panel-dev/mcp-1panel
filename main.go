@@ -20,11 +20,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/1Panel-dev/mcp-1panel/operations/app"
-	"github.com/1Panel-dev/mcp-1panel/operations/database"
-	"github.com/1Panel-dev/mcp-1panel/operations/ssl"
-	"github.com/1Panel-dev/mcp-1panel/operations/system"
-	"github.com/1Panel-dev/mcp-1panel/operations/website"
+	"encoding/json"
+	"github.com/1Panel-dev/mcp-1panel/internal/legacy"
+	"github.com/1Panel-dev/mcp-1panel/internal/locale"
+	"github.com/1Panel-dev/mcp-1panel/internal/panel"
 	"github.com/1Panel-dev/mcp-1panel/utils"
 )
 
@@ -34,24 +33,25 @@ var (
 
 const streamableSessionTimeout = 30 * time.Minute
 
-func newMCPServer(access AccessLevel) *mcp.Server {
+func newMCPServer(access AccessLevel, clients ...*legacy.Client) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "github.com/1Panel-dev/mcp-1panel",
 		Version: Version,
 	}, &mcp.ServerOptions{
 		Capabilities: &mcp.ServerCapabilities{},
 	})
-	addTools(server, access)
+	addTools(server, access, clients...)
 	return server
 }
 
-func addTools(s *mcp.Server, access AccessLevel) {
-	allowed := access.allowsTool
-	system.RegisterTools(s, allowed)
-	website.RegisterTools(s, allowed)
-	ssl.RegisterTools(s, allowed)
-	app.RegisterTools(s, allowed)
-	database.RegisterTools(s, allowed)
+func addTools(s *mcp.Server, access AccessLevel, clients ...*legacy.Client) {
+	var client *legacy.Client
+	if len(clients) > 0 {
+		client = clients[0]
+	}
+	if err := legacy.RegisterTools(s, access.allowsTool, client); err != nil {
+		panic(err)
+	}
 }
 
 type httpSecurityConfig struct {
@@ -63,12 +63,12 @@ type httpSecurityConfig struct {
 	TLSHosts       []string
 }
 
-func runServer(ctx context.Context, transport, addr string, access AccessLevel, security httpSecurityConfig) error {
+func runServer(ctx context.Context, transport, addr string, access AccessLevel, security httpSecurityConfig, clients ...*legacy.Client) error {
 	if err := validateHTTPTransportSecurity(transport, security); err != nil {
 		return err
 	}
 
-	mcpServer := newMCPServer(access)
+	mcpServer := newMCPServer(access, clients...)
 
 	log.Printf("starting MCP server transport=%s access=%s", transport, access)
 
@@ -220,22 +220,24 @@ func validateHTTPListenAddr(scheme, listenAddr string, security httpSecurityConf
 }
 
 func secureHTTPHandler(next http.Handler, security httpSecurityConfig) http.Handler {
+	defaultLanguage := locale.Environment()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(locale.RequestContext(r.Context(), r.Header.Get("Accept-Language"), nil, defaultLanguage))
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				log.Printf("panic in HTTP transport handler")
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				http.Error(w, locale.Text(r.Context(), http.StatusText(http.StatusInternalServerError)), http.StatusInternalServerError)
 			}
 		}()
 
 		if !originAllowed(r.Header.Get("Origin"), security.AllowedOrigins) {
-			http.Error(w, "origin not allowed", http.StatusForbidden)
+			http.Error(w, locale.Text(r.Context(), "origin not allowed"), http.StatusForbidden)
 			return
 		}
 
 		if !security.AllowInsecure && !validMCPToken(r, security.Token) {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="mcp-1panel"`)
-			http.Error(w, "missing or invalid MCP authentication token", http.StatusUnauthorized)
+			http.Error(w, locale.Text(r.Context(), "missing or invalid MCP authentication token"), http.StatusUnauthorized)
 			return
 		}
 
@@ -336,6 +338,13 @@ func parseHTTPAddr(raw string) (scheme, listenAddr, basePath, displayAddr string
 func main() {
 	var (
 		transport         string
+		mode              string
+		listenAddress     string
+		panelSocket       string
+		keyID             string
+		showVersion       bool
+		showCatalog       bool
+		checkHealth       bool
 		accessToken       string
 		host              string
 		addr              string
@@ -347,6 +356,13 @@ func main() {
 		tlsDir            string
 		tlsHostsRaw       string
 	)
+	flag.StringVar(&mode, "mode", "legacy", "Startup mode: legacy (independent v2 API Key) or panel (managed Core bridge)")
+	flag.StringVar(&listenAddress, "listen", "127.0.0.1:18081", "Managed adapter loopback listen address")
+	flag.StringVar(&panelSocket, "panel-socket", "/etc/1panel/mcp-runtime/core.sock", "Managed Core runtime Unix socket")
+	flag.StringVar(&keyID, "key-id", "", "1Panel API Key ID (or PANEL_KEY_ID)")
+	flag.BoolVar(&showVersion, "version", false, "Print adapter version and contract as JSON")
+	flag.BoolVar(&showCatalog, "catalog", false, "Print the canonical v2 tool catalog as JSON")
+	flag.BoolVar(&checkHealth, "healthcheck", false, "Check the managed adapter and Core bridge")
 	flag.StringVar(&transport, "transport", "stdio", "Transport type (stdio, streamable-http)")
 	flag.StringVar(&addr, "addr", "http://127.0.0.1:8000", "Base URL (host, port, optional path) for HTTP transports")
 	flag.StringVar(&accessToken, "token", "", "1Panel api key")
@@ -360,12 +376,52 @@ func main() {
 	flag.StringVar(&tlsHostsRaw, "tls-hosts", "", "Comma-separated DNS names and IP addresses for the MCP server certificate")
 	flag.Parse()
 
-	if accessToken != "" {
-		utils.SetAccessToken(accessToken)
+	if mode != "legacy" && mode != "panel" {
+		configurationError("mode must be legacy or panel")
 	}
-	if host != "" {
-		utils.SetHost(host)
+	if showVersion {
+		printJSON(panel.Info(Version))
+		return
 	}
+	if showCatalog {
+		printJSON(panel.LocalCatalog())
+		return
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if checkHealth {
+		if err := panel.CheckHealth(ctx, listenAddress); err != nil {
+			fmt.Fprintf(os.Stderr, "managed health check failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if mode == "panel" {
+		if host != "" || accessToken != "" || keyID != "" || mcpToken != "" || allowedOriginsRaw != "" || allowInsecureHTTP || allowRemoteHTTP || accessLevelRaw != "" || tlsDir != "" || tlsHostsRaw != "" || transport != "stdio" || addr != "http://127.0.0.1:8000" {
+			configurationError("panel mode accepts only managed listen and socket settings")
+		}
+		err := panel.Run(ctx, panel.Config{ListenAddress: listenAddress, PanelSocket: panelSocket, Version: Version})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "managed adapter error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if host == "" {
+		host = os.Getenv("PANEL_HOST")
+	}
+	if accessToken == "" {
+		accessToken = os.Getenv("PANEL_ACCESS_TOKEN")
+	}
+	if keyID == "" {
+		keyID = os.Getenv("PANEL_KEY_ID")
+	}
+	client, err := legacy.NewClient(legacy.Config{Host: host, APIKey: accessToken, KeyID: keyID})
+	if err != nil {
+		configurationError(err.Error())
+	}
+	defer client.Close()
 
 	if mcpToken == "" {
 		mcpToken = os.Getenv("MCP_AUTH_TOKEN")
@@ -388,10 +444,19 @@ func main() {
 		TLSHosts:       parseTLSHosts(tlsHostsRaw),
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if err := runServer(ctx, transport, addr, accessLevel, security); err != nil {
+	if err := runServer(ctx, transport, addr, accessLevel, security, client); err != nil {
 		fmt.Fprintf(os.Stderr, "server run error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func printJSON(value any) {
+	if err := json.NewEncoder(os.Stdout).Encode(value); err != nil {
+		fmt.Fprintln(os.Stderr, "unable to encode adapter metadata")
+		os.Exit(1)
+	}
+}
+func configurationError(message string) {
+	fmt.Fprintf(os.Stderr, "configuration error: %s\n", message)
+	os.Exit(2)
 }

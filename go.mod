@@ -1,6 +1,6 @@
 module github.com/1Panel-dev/mcp-1panel
 
-go 1.26.6
+go 1.27.3
 
 require github.com/modelcontextprotocol/go-sdk v1.6.1
 
