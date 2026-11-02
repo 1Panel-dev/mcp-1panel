@@ -49,7 +49,7 @@ credential is deployed to child nodes.
    support the operation-bound identity and resource guards required by Core.
 2. Prepare the primary node's rootful Docker Engine and a compatible adapter image.
    Seven image architectures are supported: 386, amd64, arm64, arm/v7, s390x, ppc64le and riscv64.
-3. Open **AI → MCP管理 → 1Panel MCP → Install**. Choose a fixed semantic version tag
+3. Open **AI → MCP Management → 1Panel MCP → Install**. Choose a fixed semantic version tag
    or SHA256 digest from `1panel/mcp-server`, the loopback port (default `18081`),
    source access policy and external HTTPS `/mcp` URL as appropriate.
 4. Wait for installation to finish. The panel validates the image platform,

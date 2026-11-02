@@ -11,7 +11,7 @@ official Go MCP SDK; managed mode integrates with 1Panel's authorization and aud
 | Mode | Connection and authorization | Deployment |
 | --- | --- | --- |
 | Independent: `--mode=legacy` (default) | Configured API Key calls existing public `/api/v2` APIs; panel permissions apply to every request | stdio or Streamable HTTP, as a binary or Docker container |
-| Managed: `--mode=panel` | Dedicated MCP credential; Core checks the owner's current permissions, node/tool grants and policy | Docker on the primary node, installed from **AI → MCP管理 → 1Panel MCP** |
+| Managed: `--mode=panel` | Dedicated MCP credential; Core checks the owner's current permissions, node/tool grants and policy | Docker on the primary node, installed from **AI → MCP Management → 1Panel MCP** |
 
 Independent mode requires an enabled public API and compatible APIs/DTOs for the
 selected tools on your installed 1Panel v2 release. It needs no managed MCP
