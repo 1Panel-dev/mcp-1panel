@@ -118,6 +118,8 @@ var localMessageCodes = map[string]string{
 	"IP certificates support HTTP validation only":              "MCP_INVALID_ARGUMENTS",
 	"IP certificates require a Let's Encrypt ACME account":      "MCP_CONFLICT",
 	"The requested installed application does not exist":        "MCP_CONFLICT",
+	"Certificate is not ready for binding":                      "MCP_CONFLICT",
+	"The website or certificate is not ready for binding":       "MCP_CONFLICT",
 	"The requested application does not exist":                  "MCP_CONFLICT",
 	"Requested application version is unavailable":              "MCP_CONFLICT",
 	"OpenResty is not installed on the selected node":           "MCP_CONFLICT",

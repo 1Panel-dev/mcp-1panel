@@ -5,7 +5,7 @@
 # 1Panel v2 MCP 集成
 
 本文说明部署、授权和运行时契约。下载、源码构建及客户端启动方式见
-[中文 README](README.zh-Hans.md)。两种模式共享 20 个工具、严格输入 schema 和结果投影。
+[中文 README](README.zh-Hans.md)。两种模式共享 21 个工具、严格输入 schema 和结果投影。
 
 | 模式 | 认证与执行 | 部署要求 |
 | --- | --- | --- |
@@ -21,8 +21,8 @@
 `1Panel-Timestamp` 和 `1Panel-Token` 签名，并可选携带 `1Panel-Key-ID`。
 禁用重定向、环境代理和环境中已有的 Cookie。工具参数不能更改主机、凭据或请求头。
 
-`readonly` 开放 15 个查询工具；`readwrite` 开放 18 个，增加网站、证书和数据库创建；
-`full` 开放全部 20 个，增加 MySQL/OpenResty 安装。适配器在每次列举和调用时实施该策略，
+`readonly` 开放 15 个查询工具；`readwrite` 开放 19 个，增加网站、证书和数据库创建及安全证书绑定；
+`full` 开放全部 21 个，增加 MySQL/OpenResty 安装。适配器在每次列举和调用时实施该策略，
 包括直接调用隐藏工具的情况；它不能授予额外的面板权限。
 每个 API 请求仍遵循账户的常规 API Key 和业务权限规则。
 此模式不具备托管 MCP 工具授权、准入票据、调用审计、Agent 快照语义或托管模式的最终资源重新校验。
@@ -113,7 +113,7 @@ Core 在每个 API 子调用中重新检查凭据状态、所有者、节点成�
 不是按网站或数据库设置的资源允许列表。调用契约不接受任意 URL、请求头、SQL 或所有者身份。
 专用 MCP token 不能认证普通公开 API 或管理凭据；请通过已授权的面板 Session 管理凭据。
 
-全部 19 个业务工具接受可选 `nodeId`，默认 `"local"`（主节点）。
+全部 20 个业务工具接受可选 `nodeId`，默认 `"local"`（主节点）。
 子节点 ID 是 `list_nodes` 返回的正十进制数字字符串，例如 `"7"`；
 名称、IP 地址、空字符串、零、前导零及非字符串值均无效。
 `list_nodes` 接受 `{}`，仅返回可见节点的安全元数据。
@@ -170,6 +170,7 @@ CLI 目录输出不包含凭据授权或策略哈希；策略哈希由 Core 的�
 | `list_website_domains` | 域名列表；`website_id` |
 | `get_website_https` | HTTPS 元数据；`website_id` |
 | `get_ssl_metadata` | 证书元数据；`ssl_id` |
+| `bind_ssl` | 通过原 HTTPS API 为静态网站应用就绪证书；`website_id`、`ssl_id` |
 | `get_installed_app` | 应用元数据；`app_install_id` |
 | `list_app_versions` | 目录版本；`app_key` |
 | `list_mysql_instances` | 已安装的本地 MySQL 实例 |
@@ -184,6 +185,19 @@ CLI 目录输出不包含凭据授权或策略哈希；策略哈希由 Core 的�
 - 网站创建接受可选整数 `port`（1–65535）。省略时读取目标节点已安装 OpenResty 的 `httpPort`；
   查询失败则停止创建，不回退到 80。代理 URL 要求 HTTP(S)，不得携带用户凭据或原始 Nginx 指令/控制字符。
   通配符存储别名使用有界哈希。成功返回 `status:completed` 和请求的域名，不虚构 ID。
+- 证书绑定的 `website_id`、`ssl_id` 均为 1–2147483647 的整数。
+  在目标节点读取网站、域名、HTTPS 和证书元数据，检查运行中的顶级静态网站、证书就绪状态、有效期及域名元数据覆盖，
+  然后仅调用一次原有 `POST /websites/:id/https`。路径 ID 与请求体 `websiteId` 相同，固定 `enable:true`、`type:"existed"`。
+  网站域名仅支持具体的 ASCII/punycode DNS 名称；证书元数据允许最左侧的完整通配符匹配一个标签。
+  预检查发现已有其他证书关联时拒绝写入；该检查不能原子地阻止面板/API 的并发修改。
+  首次启用明确采用 `httpConfig:"HTTPToHTTPS"`、TLS 1.3/1.2、面板默认密码套件，关闭 HSTS 和 HTTP/3。
+  原接口保存整组 HTTPS 策略；未绑定网站的元数据不能保证保留其自定义 TLS 配置。
+  POST 成功后再次查询 HTTPS，仅在证书关联、跳转/协议及 HSTS/HTTP3 关闭状态一致时返回 `applied`；
+  已有同一证书关联则返回 `already_bound`，不发送 POST。
+  两种结果仅反映元数据，不验证证书/私钥配对或实际 TLS 指纹，不提供新增并发隔离或自动回滚。
+  已提交写入后发生网络/服务端错误或回读失败时结果未知，从不自动重试写入；私钥和证书正文不投影给调用方。
+  工具不签发证书或关闭 HTTPS，无需绑定功能专用的 Agent 扩展；托管模式需要该工具的独立授权。
+  该工具策略变化后需刷新目录并明确保存授权，其他工具策略不变。
 - 证书签发使用现有账户。省略选择器时仅能解析唯一账户；多个账户需要显式 ID。
   `dnsAccount` 与 `dns_account_id` 互斥；HTTP 拒绝通配符和 DNS 选择器。
   裸 IPv4/IPv6 要求 HTTP、Let's Encrypt 和面板 IP 签发支持，仍受 CA 地址策略和可达性限制。

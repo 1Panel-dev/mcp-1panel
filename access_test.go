@@ -55,7 +55,7 @@ func TestToolAccessAndMetadata(t *testing.T) {
 			"list_ssls", "get_ssl_metadata",
 			"list_installed_apps", "get_installed_app", "list_app_versions",
 			"list_databases", "list_mysql_instances", "get_mysql_status",
-			"create_website", "create_ssl", "create_database",
+			"create_website", "create_ssl", "create_database", "bind_ssl",
 		}},
 		{AccessFull, []string{
 			"list_nodes", "get_system_info", "get_dashboard_info",
@@ -63,7 +63,7 @@ func TestToolAccessAndMetadata(t *testing.T) {
 			"list_ssls", "get_ssl_metadata",
 			"list_installed_apps", "get_installed_app", "list_app_versions",
 			"list_databases", "list_mysql_instances", "get_mysql_status",
-			"create_website", "create_ssl", "create_database", "install_mysql", "install_openresty",
+			"create_website", "create_ssl", "create_database", "bind_ssl", "install_mysql", "install_openresty",
 		}},
 	}
 

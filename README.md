@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](docs/README.zh-Hans.md)
 
-An MCP server for 1Panel v2, with 20 shared tools for nodes, system status,
+An MCP server for 1Panel v2, with 21 shared tools for nodes, system status,
 websites, certificates, applications and MySQL. Independent mode uses the
 official Go MCP SDK; managed mode integrates with 1Panel's authorization and audit.
 
@@ -67,8 +67,8 @@ provides the version; prereleases and tags containing `-` do not update Docker `
 
 ### Docker
 
-The image defaults to independent stdio mode. To build and export a fixed version
-locally (these commands do not publish an image):
+The image defaults to independent stdio mode. Local Make targets use `fbhy/mcp-server`
+by default. To build and export a fixed version locally:
 
 ```sh
 make docker_build VERSION=v2.0.0-rc1 DOCKER_PLATFORM=linux/amd64
@@ -76,6 +76,26 @@ make docker_save VERSION=v2.0.0-rc1 DOCKER_PLATFORM=linux/amd64
 # Transfer to a matching Linux host, then import:
 docker load -i build/mcp-1panel-linux-amd64-v2.0.0-rc1.tar
 ```
+
+Start Docker Desktop and sign in to Docker Hub with an account that can push to
+`fbhy/mcp-server`. Then build and push `linux/amd64` and `linux/arm64`:
+
+```sh
+make docker_push VERSION=v2.0.0-rc1
+```
+
+`docker_push` automatically creates or reuses a multi-platform builder, uses Docker's
+saved credentials, and publishes only the specified version tag. Override the repository
+or platform list as needed:
+
+```sh
+make docker_push VERSION=v2.0.0-rc1 DOCKER_IMAGE=fbhy/mcp-server DOCKER_PLATFORMS=linux/amd64
+```
+
+`DOCKER_BUILDER` selects the reusable builder (default: `mcp-1panel-builder`).
+For other environments, see [Docker's multi-platform setup](https://docs.docker.com/build/building/multi-platform/).
+`docker_build` and `docker_save` use the singular `DOCKER_PLATFORM` and do not publish.
+Use `fbhy/mcp-server` in client configurations when running these locally built images.
 
 Choose your own fixed version; the example tag is not a publication claim.
 The official repository is `1panel/mcp-server`. Docker builds support
@@ -156,8 +176,8 @@ uses Core grants instead of this option.
 | Level | Tools |
 | --- | --- |
 | `readonly` | 15 query, list and status tools |
-| `readwrite` | 18 tools, adding website, certificate and database creation |
-| `full` | All 20, adding MySQL and OpenResty installation |
+| `readwrite` | 19 tools, adding website, certificate and database creation and safe certificate binding |
+| `full` | All 21, adding MySQL and OpenResty installation |
 
 | Tool | Minimum level | Purpose |
 | --- | --- | --- |
@@ -178,6 +198,7 @@ uses Core grants instead of this option.
 | `get_mysql_status` | `readonly` | Fixed MySQL status counters |
 | `create_website` | `readwrite` | Create a static or proxy website |
 | `create_ssl` | `readwrite` | Submit certificate issuance |
+| `bind_ssl` | `readwrite` | Bind an existing ready certificate to a static website |
 | `create_database` | `readwrite` | Create a local MySQL database |
 | `install_mysql` | `full` | Submit MySQL installation |
 | `install_openresty` | `full` | Submit OpenResty installation |
@@ -187,12 +208,29 @@ its query classification does not promise zero server writes. Managed mode reads
 
 ## Nodes and write outcomes
 
-The 19 business tools accept optional `nodeId`, defaulting to `"local"`. Call
+The 20 business tools accept optional `nodeId`, defaulting to `"local"`. Call
 `list_nodes` with `{}` for child IDs such as `"7"`, then pass the ID to a business
 tool. Names and IPs are not node selectors. Independent mode resolves ID to current
 name per call and routes through `CurrentNode`; local calls need no discovery.
 Managed mode uses stable-ID routing and rechecks grants on each API step.
 Neither mode falls back to the primary node. See [node authorization](docs/panel-integration.md#node-selection-and-authorization).
+
+`bind_ssl` requires explicit `website_id` and `ssl_id` on the selected node. It reads
+website, domain, HTTPS and certificate metadata, then uses the original
+`POST /websites/:id/https` with `enable:true` and `type:"existed"`. It supports running,
+top-level static sites with concrete ASCII/punycode DNS names and checks ready certificate
+metadata, validity dates and domain coverage before writing. A different certificate
+already recorded on the website is refused during this precheck.
+First-time HTTPS uses HTTP-to-HTTPS redirection, TLS 1.3/1.2, the panel's default ciphers,
+HSTS off and HTTP/3 off. This is a complete HTTPS save with an explicit policy;
+custom settings on an unbound site are not guaranteed to be preserved by its metadata API.
+`applied` means the POST succeeded and HTTPS readback matched the certificate association,
+redirect/protocol settings and disabled HSTS/HTTP3. `already_bound` means the same
+certificate was already recorded and no POST was sent. Neither status verifies served TLS material or guarantees isolation from concurrent
+panel/API changes. Failed or uncertain writes are not retried or compensated automatically.
+Managed credentials need an explicit grant for this tool. Updating its API policy requires
+refreshing and explicitly saving its managed authorization; the other tools' policies are
+unchanged. No binding-specific Agent extension is required.
 
 Certificate issuance and app installation return `requestStatus:accepted`, which
 means submitted, not completed. A submitted write followed by a network/read

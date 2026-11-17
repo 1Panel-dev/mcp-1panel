@@ -158,7 +158,7 @@ func (b *apiBridge) RequestAPI(ctx context.Context, method, path string, payload
 			}
 			b.selectedNode = selected
 		}
-		mutation := op.ID == "website_create" || op.ID == "database_create" || op.ID == "certificate_create" || op.ID == "app_install"
+		mutation := op.ID == "website_create" || op.ID == "database_create" || op.ID == "certificate_create" || op.ID == "app_install" || op.ID == "website_https_bind"
 		var body any = payload
 		if method == "GET" {
 			body = nil

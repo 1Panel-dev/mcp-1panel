@@ -53,6 +53,17 @@ func Tools() []shared.ToolSpec {
 	tools = append(tools, shared.NewTool(category, getWebsiteHTTPS, "get_website_https", "Get HTTPS settings and certificate metadata for an explicit website ID on the primary node; private keys and certificate contents are excluded", true,
 		shared.Object(shared.Schema{"website_id": shared.Integer(1, 2147483647)}, "website_id"),
 		shared.NewOperation("website_https", "GET", "/websites/:id/https", shared.Empty(), "enable", "SSLProtocol", "hsts", "hstsIncludeSubDomains", "httpsPorts", "httpsPort", "http3", "SSL.id", "SSL.primaryDomain", "SSL.domains", "SSL.type", "SSL.provider", "SSL.organization", "SSL.autoRenew", "SSL.expireDate", "SSL.startDate", "SSL.status", "SSL.keyType")))
+	tools = append(tools, shared.NewTool(category, bindSSL, "bind_ssl", "Enable HTTPS for an explicit running static website using an existing ready certificate and the ordinary HTTPS API. First enablement uses HTTP-to-HTTPS redirect, TLS 1.2/1.3, backend default ciphers, and disables HSTS/HTTP3. Refuses an observed different certificate; matching metadata is already_bound without writing. Success confirms configuration readback, not live TLS or concurrent isolation; writes are never retried", false,
+		shared.Object(shared.Schema{"website_id": shared.Integer(1, 2147483647), "ssl_id": shared.Integer(1, 2147483647)}, "website_id", "ssl_id"),
+		shared.NewOperation("website", "GET", "/websites/:id", shared.Empty(), "id", "type", "status", "protocol", "webSiteSSLId", "parentWebsiteID"),
+		shared.NewOperation("website_domains", "GET", "/websites/domains/:websiteId", shared.Empty(), "id", "websiteId", "domain", "port"),
+		shared.NewOperation("website_https_bind_state", "GET", "/websites/:id/https", shared.Empty(), "enable", "SSL.id", "httpConfig", "SSLProtocol", "hsts", "hstsIncludeSubDomains", "http3"),
+		shared.NewOperation("certificate", "GET", "/websites/ssl/:id", shared.Empty(), "id", "status", "primaryDomain", "domains", "startDate", "expireDate"),
+		shared.NewOperation("website_https_bind", "POST", "/websites/:id/https", shared.Object(shared.Schema{
+			"websiteId": shared.Integer(1, 2147483647), "enable": shared.Schema{"type": "boolean", "enum": []bool{true}}, "type": shared.Enum("existed"), "websiteSSLId": shared.Integer(1, 2147483647),
+			"httpConfig": shared.Enum("HTTPToHTTPS"), "SSLProtocol": shared.Array(shared.Enum("TLSv1.3", "TLSv1.2"), 2, 2), "algorithm": shared.Enum(""),
+			"hsts": shared.Schema{"type": "boolean", "enum": []bool{false}}, "hstsIncludeSubDomains": shared.Schema{"type": "boolean", "enum": []bool{false}}, "http3": shared.Schema{"type": "boolean", "enum": []bool{false}},
+		}, "websiteId", "enable", "type", "websiteSSLId", "httpConfig", "SSLProtocol", "algorithm", "hsts", "hstsIncludeSubDomains", "http3"), "enable", "SSL.id")))
 	return tools
 }
 

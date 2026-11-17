@@ -5,7 +5,7 @@
 # 1Panel v2 MCP integration
 
 This guide covers deployment, authorization and the runtime contract. For downloads, source builds and
-client startup, see the [README](../README.md). Both modes share 20 tools, strict input schemas and
+client startup, see the [README](../README.md). Both modes share 21 tools, strict input schemas and
 result projections.
 
 | Mode | Authentication and execution | Deployment requirement |
@@ -22,8 +22,8 @@ if supported by the panel. The host/key configuration is immutable. Every reques
 `1Panel-Timestamp` and `1Panel-Token` signatures and optional `1Panel-Key-ID`. Redirects, environment
 proxies and ambient cookies are disabled. Tool arguments cannot change the host, credentials or headers.
 
-`readonly` exposes 15 query tools; `readwrite` exposes 18, adding website, certificate and database
-creation; `full` exposes all 20, adding MySQL/OpenResty installation. The adapter enforces this policy
+`readonly` exposes 15 query tools; `readwrite` exposes 19, adding website, certificate and database
+creation and safe certificate binding; `full` exposes all 21, adding MySQL/OpenResty installation. The adapter enforces this policy
 on every listing and call, including direct calls to hidden tools. It cannot grant additional panel
 permissions. Every API request still follows the account's ordinary API Key and business rules. This
 mode does not acquire managed MCP grants, admission tickets, invocation audit, Agent snapshot semantics
@@ -126,7 +126,7 @@ resource allowlists. Arbitrary URLs, headers, SQL and owner identities cannot be
 invocation contract. Dedicated MCP tokens cannot authenticate ordinary public APIs or credential
 management; manage credentials through an authorized panel session.
 
-All 19 business tools accept optional `nodeId`, defaulting to `"local"` (primary). Child IDs are
+All 20 business tools accept optional `nodeId`, defaulting to `"local"` (primary). Child IDs are
 positive decimal strings returned by `list_nodes`, such as `"7"`; names, IP addresses, empty strings,
 zero, leading zeroes and non-string values are invalid. `list_nodes` accepts `{}` and returns only safe
 metadata for visible nodes. Managed discovery requires its own tool grant and intersects the explicit
@@ -183,6 +183,7 @@ are rejected. Use the current catalog for complete schemas.
 | `list_website_domains` | Domains; `website_id` |
 | `get_website_https` | HTTPS metadata; `website_id` |
 | `get_ssl_metadata` | Certificate metadata; `ssl_id` |
+| `bind_ssl` | Apply an existing ready certificate through the original HTTPS API; `website_id`, `ssl_id` |
 | `get_installed_app` | Application metadata; `app_install_id` |
 | `list_app_versions` | Catalog versions; `app_key` |
 | `list_mysql_instances` | Installed local MySQL instances |
@@ -201,6 +202,28 @@ are rejected. Use the current catalog for complete schemas.
   with no fallback to 80. Proxy URLs require HTTP(S), no user credentials or raw
   Nginx directive/control characters. Wildcard storage aliases use a bounded hash.
   Success returns `status:completed` and the requested domain, not an invented ID.
+- Certificate binding accepts integer `website_id` and `ssl_id` from 1 to 2147483647.
+  It reads website, domain, HTTPS and certificate metadata on the selected node, checks
+  a running top-level static website, a ready certificate within its validity dates and
+  metadata domain coverage, then calls the original `POST /websites/:id/https` once.
+  The website path ID and body `websiteId` are identical; `enable:true` and `type:"existed"`
+  are fixed. Only concrete ASCII/punycode DNS website names are supported; certificate
+  metadata may contain a leftmost wildcard matching one label. Other recorded certificate
+  associations are refused before the POST. This precheck is not an atomic condition on
+  concurrent panel/API writes.
+  First-time HTTPS explicitly uses `httpConfig:"HTTPToHTTPS"`, TLS 1.3/1.2, the panel's
+  default ciphers, HSTS off and HTTP/3 off. The original API saves a complete HTTPS policy;
+  its metadata for an unbound site cannot guarantee preservation of custom TLS settings.
+  After a successful POST, the tool reads HTTPS again and reports `applied` only if the
+  association, redirect/protocol settings and disabled HSTS/HTTP3 match. A matching existing association reports
+  `already_bound` without a POST. These are metadata results, not certificate/keypair or
+  live TLS fingerprint verification. There is no new concurrency isolation or automatic
+  rollback; a network/server failure after submitting a write, or a failed readback, has
+  an unknown outcome. Writes are never retried automatically. Private keys and certificate
+  contents are not projected to callers.
+  The tool does not issue certificates or disable HTTPS and requires no binding-specific
+  Agent extension. A managed grant is required; changing this tool's API policy requires
+  refreshing and explicitly saving its authorization. Other tools' policies are unchanged.
 - Certificate issuance uses existing accounts. Omitted selectors resolve only a
   single account; ambiguous accounts require explicit IDs. `dnsAccount` and
   `dns_account_id` are mutually exclusive; HTTP rejects wildcard/DNS selectors.

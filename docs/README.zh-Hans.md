@@ -2,7 +2,7 @@
 
 [English](../README.md) | [简体中文](README.zh-Hans.md)
 
-面向 1Panel v2 的 MCP 服务，提供节点、系统状态、网站、证书、应用和 MySQL 共 20 个共享工具。
+面向 1Panel v2 的 MCP 服务，提供节点、系统状态、网站、证书、应用和 MySQL 共 21 个共享工具。
 独立模式使用官方 Go MCP SDK；托管模式接入 1Panel 的授权与审计体系。
 
 ## 选择接入模式
@@ -63,7 +63,7 @@ chmod +x ./mcp-1panel-linux-amd64
 
 ### Docker
 
-镜像默认运行独立 stdio 模式。本机构建并导出固定版本（不会发布镜像）：
+镜像默认运行独立 stdio 模式。Make 命令默认使用 `fbhy/mcp-server`，本机构建并导出固定版本：
 
 ```sh
 make docker_build VERSION=v2.0.0-rc1 DOCKER_PLATFORM=linux/amd64
@@ -71,6 +71,25 @@ make docker_save VERSION=v2.0.0-rc1 DOCKER_PLATFORM=linux/amd64
 # 传输到匹配架构的 Linux 主机后导入：
 docker load -i build/mcp-1panel-linux-amd64-v2.0.0-rc1.tar
 ```
+
+打开 Docker Desktop，使用有权推送到 `fbhy/mcp-server` 的账号登录 Docker Hub，
+然后执行以下命令构建并推送 `linux/amd64` 和 `linux/arm64`：
+
+```sh
+make docker_push VERSION=v2.0.0-rc1
+```
+
+`docker_push` 自动创建或复用多架构构建器，使用 Docker 已保存的登录凭据，只推送指定版本标签。
+仓库名和架构列表可按需覆盖：
+
+```sh
+make docker_push VERSION=v2.0.0-rc1 DOCKER_IMAGE=fbhy/mcp-server DOCKER_PLATFORMS=linux/amd64
+```
+
+`DOCKER_BUILDER` 可指定复用的构建器，默认名称为 `mcp-1panel-builder`。
+其他环境的配置方法见 [Docker 多架构构建说明](https://docs.docker.com/build/building/multi-platform/)。
+`docker_build` 和 `docker_save` 使用单数参数 `DOCKER_PLATFORM`，不会推送镜像。
+使用这些本机构建的镜像时，客户端配置中的镜像名应改为 `fbhy/mcp-server`。
 
 请选择实际使用的固定版本；示例标签不代表已发布。
 官方仓库为 `1panel/mcp-server`，Docker 构建支持 `linux/386`、`linux/amd64`、`linux/arm64`、
@@ -144,8 +163,8 @@ export MCP_AUTH_TOKEN='<separate strong random token>'
 | 级别 | 工具 |
 | --- | --- |
 | `readonly` | 15 个查询、列表和状态工具 |
-| `readwrite` | 18 个工具，增加网站、证书和数据库创建 |
-| `full` | 全部 20 个工具，再增加 MySQL 和 OpenResty 安装 |
+| `readwrite` | 19 个工具，增加网站、证书和数据库创建及安全证书绑定 |
+| `full` | 全部 21 个工具，再增加 MySQL 和 OpenResty 安装 |
 
 | 工具 | 最低级别 | 用途 |
 | --- | --- | --- |
@@ -166,6 +185,7 @@ export MCP_AUTH_TOKEN='<separate strong random token>'
 | `get_mysql_status` | `readonly` | 固定 MySQL 状态计数器 |
 | `create_website` | `readwrite` | 创建静态或反向代理网站 |
 | `create_ssl` | `readwrite` | 提交证书申请 |
+| `bind_ssl` | `readwrite` | 将已就绪证书绑定到静态网站 |
 | `create_database` | `readwrite` | 创建本地 MySQL 数据库 |
 | `install_mysql` | `full` | 提交 MySQL 安装 |
 | `install_openresty` | `full` | 提交 OpenResty 安装 |
@@ -175,11 +195,23 @@ export MCP_AUTH_TOKEN='<separate strong random token>'
 
 ## 节点选择与写入结果
 
-19 个业务工具接受可选的 `nodeId`，默认 `"local"`。
+20 个业务工具接受可选的 `nodeId`，默认 `"local"`。
 以 `{}` 调用 `list_nodes` 获得 `"7"` 等子节点 ID，再传给业务工具，不能使用节点名称或 IP。
 独立模式在每次调用中将 ID 解析为当前名称，通过 `CurrentNode` 路由；本地调用不依赖发现。
 托管模式使用稳定 ID 路由，每个 API 步骤重新检查授权。两种模式都不会回退到主节点。
 详见[节点授权](panel-integration.zh-Hans.md#node-selection-and-authorization)。
+
+`bind_ssl` 需要显式提供目标节点的 `website_id`、`ssl_id`。读取网站、域名、HTTPS 和证书元数据后，
+使用原有 `POST /websites/:id/https`，固定 `enable:true`、`type:"existed"`。
+仅支持运行中的顶级静态网站和具体的 ASCII/punycode DNS 域名；写入前检查证书就绪状态、有效期及域名元数据覆盖，
+预检查发现网站已关联其他证书时拒绝写入。
+首次启用采用 HTTP 跳转 HTTPS、TLS 1.3/1.2、面板默认密码套件，关闭 HSTS 和 HTTP/3。
+这会按明确策略保存整组 HTTPS 设置；未绑定网站的元数据接口不能保证保留其自定义配置。
+`applied` 表示 POST 成功，且随后回读的证书关联、跳转/协议及 HSTS/HTTP3 关闭状态一致；
+`already_bound` 仅表示同一证书已被记录，未发送 POST。
+两种状态均不验证实际 TLS 证书材料，也不保证与面板/API 并发修改隔离；失败或结果未知时不自动重试或补偿。
+托管凭据需要单独授权；该工具 API 策略更新后需刷新目录并明确保存授权，其他工具策略保持不变。
+无需绑定功能专用的 Agent 扩展。
 
 证书签发和应用安装返回的 `requestStatus:accepted` 只表示已提交，不表示已完成。
 写入提交后遇网络/读取失败、HTTP 或业务码 5xx，或无效的成功响应，均属于**结果未知**。

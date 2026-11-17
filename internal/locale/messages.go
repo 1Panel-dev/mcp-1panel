@@ -66,14 +66,16 @@ var chineseMessages = map[string]string{
 	"Invalid MySQL status result":                       "MySQL 状态查询结果无效",
 
 	// Websites.
-	"Invalid website metadata result":                   "网站元数据结果无效",
-	"Website domain result exceeds the supported limit": "网站域名查询结果超过支持的数量限制",
-	"Invalid website domain result":                     "网站域名查询结果无效",
-	"Invalid website HTTPS result":                      "网站 HTTPS 查询结果无效",
-	"Invalid OpenResty installation result":             "OpenResty 安装状态查询结果无效",
-	"OpenResty is not installed on the selected node":   "所选节点未安装 OpenResty",
-	"Invalid OpenResty HTTP port":                       "OpenResty 的 HTTP 端口无效",
-	"No default website group exists":                   "不存在默认网站分组",
+	"The website or certificate is not ready for binding": "网站或证书当前不满足绑定条件",
+	"Certificate is not ready for binding":                "证书尚未就绪，暂时不能绑定",
+	"Invalid website metadata result":                     "网站元数据结果无效",
+	"Website domain result exceeds the supported limit":   "网站域名查询结果超过支持的数量限制",
+	"Invalid website domain result":                       "网站域名查询结果无效",
+	"Invalid website HTTPS result":                        "网站 HTTPS 查询结果无效",
+	"Invalid OpenResty installation result":               "OpenResty 安装状态查询结果无效",
+	"OpenResty is not installed on the selected node":     "所选节点未安装 OpenResty",
+	"Invalid OpenResty HTTP port":                         "OpenResty 的 HTTP 端口无效",
+	"No default website group exists":                     "不存在默认网站分组",
 
 	// Standalone API Key errors, after safe-message normalization.
 	"API Key authentication failed":                                                         "API Key 身份验证失败",
