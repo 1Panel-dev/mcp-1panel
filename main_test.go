@@ -8,6 +8,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -93,6 +97,23 @@ func TestHTTPTransportMatchesOnlyConfiguredEndpoint(t *testing.T) {
 }
 
 func TestStreamableHTTPEndToEnd(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		path       string
+		websiteTLS bool
+	}{
+		{"HTTP root", "/", false},
+		{"HTTP custom path", "/mcp", false},
+		{"website HTTPS root", "/", true},
+		{"website HTTPS custom path", "/mcp", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			testStreamableHTTPEndToEnd(t, test.path, test.websiteTLS)
+		})
+	}
+}
+
+func testStreamableHTTPEndToEnd(t *testing.T, path string, websiteTLS bool) {
 	const token = "test-token"
 	var panelCalls atomic.Int32
 	panelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -120,25 +141,47 @@ func TestStreamableHTTPEndToEnd(t *testing.T) {
 
 	mcpServer := newMCPServer(AccessReadOnly, panelClient)
 	handler := newHTTPTransportHandler(
-		"/mcp",
+		path,
 		newStreamableHTTPHandler(mcpServer, time.Minute),
 		httpSecurityConfig{Token: token},
 	)
 	httpServer := httptest.NewServer(handler)
 	defer httpServer.Close()
 
+	endpoint := httpServer.URL + path
+	var transport http.RoundTripper = http.DefaultTransport
+	if websiteTLS {
+		upstream, err := url.Parse(httpServer.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		website := httptest.NewTLSServer(httputil.NewSingleHostReverseProxy(upstream))
+		defer website.Close()
+		endpoint = website.URL + path
+		transport = website.Client().Transport
+	}
+	unauthenticated := &http.Client{Transport: transport}
+	response, err := unauthenticated.Get(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized || panelCalls.Load() != 0 {
+		t.Fatalf("unauthenticated ingress: status=%d panel calls=%d", response.StatusCode, panelCalls.Load())
+	}
+
 	httpClient := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 		clone := request.Clone(request.Context())
 		clone.Header = request.Header.Clone()
 		clone.Header.Set("Authorization", "Bearer "+token)
 		clone.Header.Set("Accept-Language", "en-US")
-		return http.DefaultTransport.RoundTrip(clone)
+		return transport.RoundTrip(clone)
 	})}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	client := mcp.NewClient(&mcp.Implementation{Name: "mcp-1panel-http-test", Version: "1"}, nil)
 	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
-		Endpoint:             httpServer.URL + "/mcp",
+		Endpoint:             endpoint,
 		HTTPClient:           httpClient,
 		DisableStandaloneSSE: true,
 		MaxRetries:           -1,
@@ -258,9 +301,17 @@ func TestHTTPListenSecurity(t *testing.T) {
 	}{
 		{"loopback HTTP", "http", "127.0.0.1:8000", httpSecurityConfig{}, false},
 		{"loopback IPv6 HTTP", "http", "[::1]:8000", httpSecurityConfig{}, false},
-		{"remote not allowed", "https", "192.0.2.10:8000", httpSecurityConfig{Token: "token"}, true},
-		{"remote plaintext", "http", "192.0.2.10:8000", secureRemote, true},
+		{"remote HTTP not allowed", "http", "192.0.2.10:8000", httpSecurityConfig{Token: "token"}, true},
+		{"remote HTTPS not allowed", "https", "192.0.2.10:8000", httpSecurityConfig{Token: "token"}, true},
+		{"authenticated remote HTTP", "http", "192.0.2.10:8000", secureRemote, false},
+		{"wildcard HTTP", "http", "0.0.0.0:8000", secureRemote, false},
+		{"IPv6 wildcard HTTP", "http", "[::]:8000", secureRemote, false},
 		{"remote HTTPS", "https", "192.0.2.10:8000", secureRemote, false},
+		{"remote HTTP missing token", "http", "192.0.2.10:8000", httpSecurityConfig{AllowRemote: true}, true},
+		{"remote HTTPS missing token", "https", "192.0.2.10:8000", httpSecurityConfig{AllowRemote: true}, true},
+		{"remote HTTP anonymous", "http", "192.0.2.10:8000", httpSecurityConfig{AllowRemote: true, AllowInsecure: true}, true},
+		{"remote HTTP insecure with token", "http", "192.0.2.10:8000", httpSecurityConfig{AllowRemote: true, AllowInsecure: true, Token: "token"}, true},
+		{"remote HTTPS insecure with token", "https", "192.0.2.10:8000", httpSecurityConfig{AllowRemote: true, AllowInsecure: true, Token: "token"}, true},
 		{"remote HTTPS no auth", "https", "192.0.2.10:8000", httpSecurityConfig{AllowRemote: true, AllowInsecure: true}, true},
 		{"wildcard HTTPS", "https", ":8000", secureRemote, false},
 	}
@@ -271,6 +322,22 @@ func TestHTTPListenSecurity(t *testing.T) {
 				t.Fatalf("error = %v, wantErr %v", err, test.wantErr)
 			}
 		})
+	}
+}
+
+func TestRemoteHTTPDoesNotRequireTLSMaterial(t *testing.T) {
+	tlsDir := filepath.Join(t.TempDir(), "unused-tls")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := serveHTTPTransport(ctx, "Streamable HTTP", "http://0.0.0.0:0/mcp",
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}), httpSecurityConfig{AllowRemote: true, Token: "test-token", TLSDir: tlsDir})
+	if err != nil {
+		t.Fatalf("authenticated remote HTTP failed without TLS material: %v", err)
+	}
+	if _, err := os.Stat(tlsDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("HTTP transport touched its TLS directory: %v", err)
 	}
 }
 

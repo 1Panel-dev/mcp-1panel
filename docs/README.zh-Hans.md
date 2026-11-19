@@ -2,96 +2,117 @@
 
 [English](../README.md) | [简体中文](README.zh-Hans.md)
 
-面向 1Panel v2 的 MCP 服务，提供节点、系统状态、网站、证书、应用和 MySQL 共 20 个共享工具。
-独立模式使用官方 Go MCP SDK；托管模式接入 1Panel 的授权与审计体系。
+1Panel MCP Server 为 MCP 客户端提供 1Panel v2 的节点、系统、网站、证书、应用和 MySQL 管理能力，
+包含 21 个工具，支持使用 API Key 的独立部署，以及接入面板凭据授权与审计体系的托管部署。
 
 ## 选择接入模式
 
 | 模式 | 连接与授权 | 部署方式 |
 | --- | --- | --- |
-| 独立：`--mode=legacy`（默认） | 使用配置的 API Key 调用既有公开 `/api/v2` API；每次请求均受面板权限约束 | 二进制或 Docker，支持 stdio 和 Streamable HTTP |
-| 托管：`--mode=panel` | 使用专用 MCP 凭据；Core 检查所有者当前权限、节点/工具授权及策略 | 主节点 Docker，通过 **AI → MCP管理 → 1Panel MCP** 安装 |
+| 独立：`--mode=legacy`（默认） | 使用配置的 API Key 调用面板公开 `/api/v2` API，受该 Key 及其所有者的面板权限约束 | 二进制或 Docker，支持 stdio 和 Streamable HTTP |
+| 托管：`--mode=panel` | 使用面板签发的 MCP 凭据，由 Core 校验凭据所有者的当前权限、节点和工具授权 | 通过面板 MCP 服务页面安装，由主节点管理 Docker 容器 |
 
-独立模式要求已安装的 1Panel v2 启用公开 API，并提供所选工具需要的 API 和兼容 DTO，
-无需安装托管 MCP。托管模式需要配套的 Core、主/子节点 Agent 和前端。
-详见[托管部署](panel-integration.zh-Hans.md#docker-deployment)。
+独立模式要求目标 1Panel v2 已启用公开 API，且所选工具依赖的接口及请求、响应格式与 MCP 版本兼容，
+无需安装面板托管的 MCP 服务。托管模式要求 Core、主节点及子节点 Agent、前端版本配套。
 
 | 凭据 | 用途 |
 | --- | --- |
 | `PANEL_ACCESS_TOKEN` / `--token` | 独立模式访问面板 API 的 1Panel API Key |
-| `MCP_AUTH_TOKEN` / `--mcp-token` | 客户端连接独立 Streamable HTTP 服务时使用的另一份预共享 Bearer |
+| `MCP_AUTH_TOKEN` / `--mcp-token` | 独立 Streamable HTTP 服务的接入令牌，客户端通过 Bearer 请求头发送 |
 | 面板 MCP 页面创建的 Token | 显式授权节点和工具的专用托管凭据；客户端连接面板 HTTPS `/mcp` 端点 |
 
-独立 HTTP 令牌允许调用方使用已配置的 API Key，不会创建另一个面板身份。
-两种模式的 MCP 凭据不能互换。
+连接同一独立实例的客户端共用该实例配置的 API Key 身份；接入令牌不提供独立的面板用户身份或逐凭据的节点、工具授权。
+面板 API Key、独立接入令牌和托管 MCP 凭据用途不同，不能互换。生产部署应使用权限满足业务需求的最小授权。
 
 ## 安装
 
-### 从源码构建
+### 从 Releases 下载
 
-使用 Go 构建，v2 源码分支为 `dev-v2`：
+打开 [GitHub Releases](https://github.com/1Panel-dev/mcp-1panel/releases)，
+选择已发布且与目标面板公开 API 兼容的 v2 固定版本，下载与运行主机架构匹配的 Linux 二进制
+及同一版本的 `SHA256SUMS`。运行二进制无需安装 Go。
 
-```sh
-git clone --branch dev-v2 https://github.com/1Panel-dev/mcp-1panel.git
-cd mcp-1panel
-go mod download
-make build
-./build/mcp-1panel --version
-```
-
-`make build` 在 `build/mcp-1panel` 生成当前宿主机平台的二进制。
-交叉构建 Linux 可用 `make build_linux GOARCH=amd64` 或 `GOARCH=arm64`；
-`make build_linux_all` 构建全部七种架构：386、amd64、arm64、armv7、s390x、ppc64le 和 riscv64。
-Linux 构建要求本机已有工具链和依赖缓存，产物为 `build/mcp-1panel-linux-{arch}`。
-
-### 发布二进制
-
-从 [Releases](https://github.com/1Panel-dev/mcp-1panel/releases) 选择明确发布、与已安装面板公开 API
-兼容的 v2 版本。下载对应架构文件和 `SHA256SUMS`，核对校验和后运行。以 Linux amd64 为例：
+发布文件是独立可执行文件，无需解压。以 Linux amd64 为例，将
+`mcp-1panel-linux-amd64` 和 `SHA256SUMS` 放在同一目录后执行：
 
 ```sh
+sha256sum --ignore-missing -c SHA256SUMS
 chmod +x ./mcp-1panel-linux-amd64
 ./mcp-1panel-linux-amd64 --version
 ```
 
-下方客户端配置中的路径应替换为该二进制的绝对路径。
-
-维护者点击 GitHub 的 **Publish release** 后，工作流自动测试、构建七架构 Linux 二进制，
-将产物及 `SHA256SUMS` 上传到该 Release，并推送多架构 Docker 镜像。
-普通提交、标签推送和保存草稿不触发此工作流。版本取自 Release 标签；
-预发布版本及标签含 `-` 的版本不更新 Docker `latest`。
+Linux arm64 主机下载 `mcp-1panel-linux-arm64`，并将命令中的文件名相应替换。
+客户端配置须使用可执行文件的实际绝对路径。当前 Release 提供 Linux 二进制；macOS 或 Windows 可使用 Docker 部署。
 
 ### Docker
 
-镜像默认运行独立 stdio 模式。本机构建并导出固定版本（不会发布镜像）：
+通过 [Docker Compose](../docker-compose.yml) 使用官方
+[1panel/mcp-server](https://hub.docker.com/r/1panel/mcp-server) 镜像。
+镜像默认运行 stdio，以下 Compose 显式启动独立 Streamable HTTP 服务。
+将以下内容保存为 `docker-compose.yml`：
 
-```sh
-make docker_build VERSION=v2.0.0-rc1 DOCKER_PLATFORM=linux/amd64
-make docker_save VERSION=v2.0.0-rc1 DOCKER_PLATFORM=linux/amd64
-# 传输到匹配架构的 Linux 主机后导入：
-docker load -i build/mcp-1panel-linux-amd64-v2.0.0-rc1.tar
+```yaml
+services:
+  mcp-1panel:
+    image: "${MCP_IMAGE:?Set MCP_IMAGE to a published 1panel/mcp-server tag with authenticated remote HTTP support}"
+    restart: unless-stopped
+    ports:
+      - "${MCP_PORT:-16082}:8000"
+    environment:
+      PANEL_HOST: "${PANEL_HOST:?Set PANEL_HOST to the 1Panel API root URL}"
+      PANEL_ACCESS_TOKEN: "${PANEL_ACCESS_TOKEN:?Set PANEL_ACCESS_TOKEN to the 1Panel API Key}"
+      PANEL_KEY_ID: "${PANEL_KEY_ID:-}"
+      MCP_AUTH_TOKEN: "${MCP_AUTH_TOKEN:?Set a separate strong MCP_AUTH_TOKEN}"
+      MCP_ACCESS_LEVEL: "${MCP_ACCESS_LEVEL:-readonly}"
+      MCP_LANGUAGE: "${MCP_LANGUAGE:-zh-CN}"
+    command:
+      - --mode=legacy
+      - --transport=streamable-http
+      - --addr=http://0.0.0.0:8000
+      - --allow-remote-http
+      - "--allowed-origins=${MCP_ALLOWED_ORIGINS:-}"
 ```
 
-请选择实际使用的固定版本；示例标签不代表已发布。
-官方仓库为 `1panel/mcp-server`，Docker 构建支持 `linux/386`、`linux/amd64`、`linux/arm64`、
-`linux/arm/v7`、`linux/s390x`、`linux/ppc64le` 和 `linux/riscv64`。
-托管模式通过面板安装，详见[容器契约](panel-integration.zh-Hans.md#container-and-socket-contract)。
+在 Compose 同目录创建 `.env`，替换以下占位值。镜像须使用已发布、支持已认证远程 HTTP
+且与面板 API、运行主机架构兼容的固定版本：
+
+```dotenv
+MCP_IMAGE=1panel/mcp-server:YOUR_VERSION
+PANEL_HOST=https://panel.example.com
+PANEL_ACCESS_TOKEN=YOUR_PANEL_API_KEY
+MCP_AUTH_TOKEN=YOUR_MCP_AUTH_TOKEN
+```
+
+`MCP_AUTH_TOKEN` 应为独立生成的强随机令牌。限制 `.env` 的读取权限，不将凭据纳入版本管理。
+生产环境的 `PANEL_HOST` 建议使用 HTTPS，并保持证书校验启用。
+确认配置后启动服务：
+
+```sh
+docker compose pull
+docker compose up -d
+```
+
+- 生产外部接入建议使用网站 HTTPS：在 1Panel 配置反向代理及有效证书，客户端访问 `https://mcp.example.com/` ，MCP 容器继续提供 HTTP 上游。
+- 所有 HTTP 接入请求均须携带 `Authorization: Bearer <MCP_AUTH_TOKEN>`；HTTP 明文传输令牌和业务数据，仅适用于受控网络。
+- 默认映射 `16082:8000` 会在宿主机所有接口发布 HTTP 端口。网站启用 HTTPS 不会关闭该入口；采用反向代理时，应按网络拓扑限制其直连访问。
+
+托管模式通过面板安装。
 
 ## 连接客户端
 
 ### stdio
 
-由 MCP 客户端启动二进制，填写绝对路径并替换占位值：
+配置支持 stdio 的 MCP 客户端，由客户端启动并管理服务进程。以下为通用配置，须替换路径和凭据：
 
 ```json
 {
   "mcpServers": {
     "mcp-1panel": {
-      "command": "/absolute/path/to/mcp-1panel",
+      "command": "/absolute/path/to/mcp-1panel-linux-amd64",
       "args": ["--mode=legacy", "--transport=stdio", "--access-level=readonly"],
       "env": {
-        "PANEL_HOST": "https://panel.example",
-        "PANEL_ACCESS_TOKEN": "<1Panel API Key>",
+        "PANEL_HOST": "https://panel.example.com",
+        "PANEL_ACCESS_TOKEN": "YOUR_PANEL_API_KEY",
         "MCP_LANGUAGE": "zh-CN"
       }
     }
@@ -99,53 +120,20 @@ docker load -i build/mcp-1panel-linux-amd64-v2.0.0-rc1.tar
 }
 ```
 
-stdio 不监听端口，由客户端管理时无需另行启动服务进程。
-使用 Docker 时，让客户端以相同环境变量启动以下命令；容器必须能访问面板地址：
-
-```sh
-docker run -i --rm -e PANEL_HOST -e PANEL_ACCESS_TOKEN \
-  1panel/mcp-server:v2.0.0-rc1 \
-  --mode=legacy --transport=stdio --access-level=readonly
-```
-
-使用已构建/导入的镜像或实际发布的标签。容器内 `localhost` 不代表 Docker 宿主机。
-
-### HTTPS / Streamable HTTP
-
-先启动服务，再连接客户端。以下示例使用源码构建产物、持久化本地 CA 和独立 MCP Bearer：
-
-```sh
-export PANEL_HOST='https://panel.example'
-export PANEL_ACCESS_TOKEN='<1Panel API Key>'
-export MCP_AUTH_TOKEN='<separate strong random token>'
-./build/mcp-1panel \
-  --mode=legacy --transport=streamable-http \
-  --addr=https://0.0.0.0:8000/mcp --allow-remote-http \
-  --tls-hosts=mcp.example.com --tls-dir=./build/tls \
-  --access-level=readonly
-```
-
-替换域名、配置 DNS 并放行所需端口。Streamable HTTP 客户端填写
-`https://mcp.example.com:8000/mcp`，发送请求头 `Authorization: Bearer <MCP_AUTH_TOKEN>`。
-核对启动日志中的 CA 指纹，让客户端信任 `build/tls/ca.crt`。
-保留 CA 和私钥供后续启动复用，只向客户端提供 CA 证书，不关闭证书校验。
-
-监听非回环地址必须使用 HTTPS、认证令牌和 `--allow-remote-http`。
-客户端若发送 `Origin`，通过 `--allowed-origins=https://client.example.com` 允许其准确值。
-同机客户端也可使用 `--addr=http://127.0.0.1:8000/mcp` 并省略 TLS 参数，仍需 Bearer。
-这是预共享令牌认证，不是 MCP OAuth 流程。
+stdio 通过进程标准输入、输出通信，不监听网络端口，也不需要 `MCP_AUTH_TOKEN`。
+需要独立运行的常驻服务时，使用上述 Compose 部署，并通过 Streamable HTTP 连接。
 
 ## 访问级别与工具
 
-独立模式默认 `readonly`，通过 `--access-level` / `MCP_ACCESS_LEVEL` 同时控制列举和执行，
-直接调用隐藏工具也会检查。本地级别只能收窄已配置 Key 的能力，不能增加面板权限。
-托管模式使用 Core 授权，不使用此选项。
+独立模式默认使用 `readonly`。`--access-level` / `MCP_ACCESS_LEVEL` 同时限制工具发现和执行，
+未授权工具即使被直接调用也会拒绝。实际可执行权限取访问级别与面板 API Key 权限的交集。
+托管模式由 Core 执行凭据授权，不使用此选项。
 
 | 级别 | 工具 |
 | --- | --- |
 | `readonly` | 15 个查询、列表和状态工具 |
-| `readwrite` | 18 个工具，增加网站、证书和数据库创建 |
-| `full` | 全部 20 个工具，再增加 MySQL 和 OpenResty 安装 |
+| `readwrite` | 19 个工具，增加网站、证书和数据库创建，以及网站证书绑定 |
+| `full` | 全部 21 个工具，再增加 MySQL 和 OpenResty 安装 |
 
 | 工具 | 最低级别 | 用途 |
 | --- | --- | --- |
@@ -166,26 +154,34 @@ export MCP_AUTH_TOKEN='<separate strong random token>'
 | `get_mysql_status` | `readonly` | 固定 MySQL 状态计数器 |
 | `create_website` | `readwrite` | 创建静态或反向代理网站 |
 | `create_ssl` | `readwrite` | 提交证书申请 |
+| `bind_ssl` | `readwrite` | 将已就绪证书绑定到静态网站 |
 | `create_database` | `readwrite` | 创建本地 MySQL 数据库 |
 | `install_mysql` | `full` | 提交 MySQL 安装 |
 | `install_openresty` | `full` | 提交 OpenResty 安装 |
 
-独立模式的 `get_installed_app` 可能刷新面板状态缓存，查询分类不代表服务端零写入；
-托管模式仅读取已记录状态。
+独立模式的 `get_installed_app` 可能触发面板内部状态缓存刷新；`readonly` 限制业务工具权限，
+不保证查询过程完全不更新内部缓存。托管模式读取已记录的应用状态。
 
 ## 节点选择与写入结果
 
-19 个业务工具接受可选的 `nodeId`，默认 `"local"`。
-以 `{}` 调用 `list_nodes` 获得 `"7"` 等子节点 ID，再传给业务工具，不能使用节点名称或 IP。
-独立模式在每次调用中将 ID 解析为当前名称，通过 `CurrentNode` 路由；本地调用不依赖发现。
-托管模式使用稳定 ID 路由，每个 API 步骤重新检查授权。两种模式都不会回退到主节点。
-详见[节点授权](panel-integration.zh-Hans.md#node-selection-and-authorization)。
+除 `list_nodes` 外，20 个业务工具均接受可选参数 `nodeId`，默认值为 `"local"`。
+以 `{}` 调用 `list_nodes` 获取子节点 ID，再传入业务工具，例如 `"nodeId":"7"`；不接受节点名称或 IP。
+独立模式在每次调用中将 ID 解析为当前节点名称，通过面板 `CurrentNode` 路由；本地调用不依赖节点发现。
+托管模式使用稳定节点 ID，并在每个 API 步骤重新校验授权。目标节点不可用或无权限时均返回错误，不回退至主节点。
 
-证书签发和应用安装返回的 `requestStatus:accepted` 只表示已提交，不表示已完成。
-写入提交后遇网络/读取失败、HTTP 或业务码 5xx，或无效的成功响应，均属于**结果未知**。
-任何手动重试前，先在 1Panel 检查实际资源或任务，不可自动重复写入。
-断开连接或撤销凭据不会回滚已受理的工作。
-详见[工具输入与约束](panel-integration.zh-Hans.md#offline-manifest-and-twenty-shared-tools)。
+`bind_ssl` 要求提供目标节点的 `website_id` 和 `ssl_id`，仅支持运行中的顶级静态网站及具体的 ASCII/punycode DNS 域名。
+写入前校验证书就绪状态、有效期及域名覆盖范围；网站已关联其他证书时拒绝操作。
+首次绑定会保存一组 HTTPS 设置：HTTP 跳转 HTTPS、TLS 1.3/1.2、面板默认密码套件，HSTS 和 HTTP/3 关闭，
+不保证保留尚未绑定证书的网站原有自定义 HTTPS 设置。
+`applied` 表示保存成功且回读的证书关联、跳转、协议和 HSTS/HTTP3 设置符合预期；
+`already_bound` 表示面板已记录相同证书，本次未执行写入。
+上述状态不代表已验证实际提供的 TLS 证书，也不保证与其他并发修改隔离。失败或结果未知时不会自动重试或补偿。
+托管模式需单独授予该工具权限；策略更新后，须刷新工具目录并重新确认授权。
+
+证书签发和应用安装返回 `requestStatus:accepted` 时，仅表示请求已受理，应继续查询资源或任务的最终状态。
+写入提交后发生网络中断、响应读取失败、HTTP 或业务码 5xx，或成功响应格式无效时，执行结果可能无法确认。
+此时须先在 1Panel 核对实际资源和任务，再决定是否重试，避免重复创建或安装。
+断开客户端连接或撤销凭据不会回滚已受理的操作。
 
 ## 配置参考
 
@@ -200,16 +196,12 @@ export MCP_AUTH_TOKEN='<separate strong random token>'
 | `--addr` | 默认 `http://127.0.0.1:8000`，可包含 `/mcp` |
 | `--mcp-token` | `MCP_AUTH_TOKEN`，用于独立 HTTP 认证 |
 | `--access-level` | `MCP_ACCESS_LEVEL`，默认 `readonly` |
-| `--tls-dir`、`--tls-hosts` | 持久化 CA/证书目录，以及逗号分隔的证书 SAN |
+| `--tls-dir`、`--tls-hosts` | 仅 MCP 自身提供 HTTPS 时使用，网站 HTTPS 反代无需配置 |
 | `--allowed-origins` | 逗号分隔的准确 Origin 允许列表 |
-| `--allow-remote-http` | 允许已认证 HTTPS 监听非回环地址 |
+| `--allow-remote-http` | 允许已认证 HTTP 或 HTTPS 监听非回环地址 |
 | `--allow-insecure-http` | 仅供本地开发的未认证回环传输 |
-| 错误语言 | `MCP_LANGUAGE=zh-CN` 或 `en`，HTTP `Accept-Language` 优先 |
+| 错误提示语言 | `MCP_LANGUAGE=zh-CN` 或 `en`，HTTP `Accept-Language` 优先；不改变工具标识、字段和结果结构 |
 
-`--version` 和 `--catalog` 离线输出元数据。面板管理 `--listen` 和 `--panel-socket`；
-`--healthcheck` 检查托管 adapter/Core 就绪状态。
-元数据和工具列表成功不能替代 API 连通性或业务操作验证。
-
-## 文档与验证
-
-- [集成、授权与托管部署](panel-integration.zh-Hans.md)
+`--version` 和 `--catalog` 可在离线环境输出版本及工具目录。
+`--listen`、`--panel-socket` 由面板托管部署管理；`--healthcheck` 用于检查托管服务与 Core 的就绪状态。
+版本检查或工具发现成功不代表面板 API 及业务操作已验证，部署后仍须完成实际调用验收。

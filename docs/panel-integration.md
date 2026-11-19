@@ -1,5 +1,3 @@
-[English](panel-integration.md) | [中文(简体)](panel-integration.zh-Hans.md)
-
 <a id="1panel-v2-mcp-integration"></a>
 
 # 1Panel v2 MCP integration
