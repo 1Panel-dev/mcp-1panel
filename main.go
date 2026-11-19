@@ -210,11 +210,8 @@ func validateHTTPListenAddr(scheme, listenAddr string, security httpSecurityConf
 	if !security.AllowRemote {
 		return fmt.Errorf("HTTP transport refuses non-loopback listen address %q without -allow-remote-http", listenAddr)
 	}
-	if scheme != "https" {
-		return fmt.Errorf("HTTP transport refuses non-loopback listen address %q without HTTPS", listenAddr)
-	}
 	if security.AllowInsecure || security.Token == "" {
-		return errors.New("remote HTTPS transport requires MCP authentication")
+		return fmt.Errorf("remote %s transport requires MCP authentication", strings.ToUpper(scheme))
 	}
 	return nil
 }
@@ -370,7 +367,7 @@ func main() {
 	flag.StringVar(&mcpToken, "mcp-token", "", "Pre-shared Bearer token for streamable-http transport")
 	flag.StringVar(&allowedOriginsRaw, "allowed-origins", "", "Comma-separated HTTP Origin allowlist for HTTP transports")
 	flag.BoolVar(&allowInsecureHTTP, "allow-insecure-http", false, "Allow unauthenticated HTTP transports; only use for local development")
-	flag.BoolVar(&allowRemoteHTTP, "allow-remote-http", false, "Allow HTTPS transports to listen on non-loopback addresses")
+	flag.BoolVar(&allowRemoteHTTP, "allow-remote-http", false, "Allow authenticated HTTP(S) transports to listen on non-loopback addresses")
 	flag.StringVar(&accessLevelRaw, "access-level", "", "MCP tool access level: readonly, readwrite, or full")
 	flag.StringVar(&tlsDir, "tls-dir", "", "Directory for the MCP local CA and server certificate")
 	flag.StringVar(&tlsHostsRaw, "tls-hosts", "", "Comma-separated DNS names and IP addresses for the MCP server certificate")
